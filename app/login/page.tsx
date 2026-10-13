@@ -135,6 +135,12 @@ function LoginForm() {
             </div>
           ) : null}
 
+          {searchParams.get("reset") === "success" ? (
+            <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              Your password has been updated. Sign in with your new password.
+            </div>
+          ) : null}
+
           <form onSubmit={handleSubmit} className="mt-8 space-y-7">
             <label className="block space-y-2">
               <span className="text-sm font-semibold text-slate-800">Email</span>

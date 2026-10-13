@@ -38,6 +38,7 @@ const navByRole: Record<UserRole, NavSection[]> = {
       items: [
         { href: "/gaa/evaluating-officer-assignments", label: "Evaluating Officer Assignments" },
         { href: "/gaa/phi-assignments", label: "PHI Assignments" },
+        { href: "/gaa/workers", label: "Cleaning Workers" },
       ],
     },
     {

@@ -190,6 +190,7 @@ export async function listPhiAuthorizedLocations(
       where: {
         locationId: assignment.location.id,
         active: true,
+        worker: { active: true },
       },
     });
 
@@ -260,7 +261,7 @@ export async function getPHIMonitoringData(
   }
 
   const totalWorkers = await prisma.workerLocationAssignment.count({
-    where: { locationId, active: true },
+    where: { locationId, active: true, worker: { active: true } },
   });
 
   const attendanceDate = dateStringToUtcDate(normalizedDate);

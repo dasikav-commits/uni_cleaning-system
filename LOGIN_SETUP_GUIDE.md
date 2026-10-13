@@ -21,6 +21,20 @@ Configure the environment variables listed in [`.env.example`](./.env.example) f
 2. Create the other accounts in **User Management**, or approve the people who signed up themselves.
 3. Create locations and tasks, then assign Evaluating Officers and PHIs to locations.
 
+## Password reset
+
+- **Forgot password** (`/forgot-password`) emails a reset link that opens `/reset-password`.
+- In Supabase → **Authentication → URL Configuration**, add `https://YOUR-DOMAIN/reset-password` (and
+  `http://localhost:3000/reset-password` for development) to the **Redirect URLs**, otherwise the link is rejected.
+- The link must be opened in the same browser the reset was requested from (Supabase PKCE flow). Expired or reused
+  links show a message with a button to request a new one. After a successful reset, all sessions are signed out.
+
+## Cleaning workers
+
+GAA users manage workers under **Assignments → Cleaning Workers** (`/gaa/workers`): add workers, assign them to
+locations with a monthly allocated amount, change allocations, and remove or deactivate workers. Active assignments
+of active workers are the "total workers" PHIs see for a location. Every change is recorded in the audit log.
+
 ## Test accounts (development only)
 
 `/init-test-users` (or `npm run seed`) creates one account per role using the passwords defined in

@@ -293,6 +293,17 @@ export async function updateManagedUser(
     throw new UserManagementError("USER_NOT_FOUND", "User not found.", 404);
   }
 
+  // Mirror the CANNOT_DELETE_SELF rule: a GAA must not be able to lock
+  // themselves out (and possibly leave the system without an administrator).
+  if (actorUser.id === userId) {
+    if (input.active === false && existing.active) {
+      throw new UserManagementError("CANNOT_DEACTIVATE_SELF", "You cannot deactivate your own account.", 400);
+    }
+    if (input.role !== undefined && input.role !== existing.role) {
+      throw new UserManagementError("CANNOT_CHANGE_OWN_ROLE", "You cannot change your own role. Ask another GAA user to do it.", 400);
+    }
+  }
+
   const updates: Prisma.UserUpdateInput = {};
   const metadata: JsonObject = {};
   const logs: {

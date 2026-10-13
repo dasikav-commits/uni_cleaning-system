@@ -248,6 +248,43 @@ describe("updateManagedUser", () => {
   });
 });
 
+describe("self-lockout protection", () => {
+  const self = {
+    id: "actor-1",
+    name: "Admin",
+    email: "admin@example.com",
+    role: "GAA",
+    active: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  it("prevents a GAA from deactivating their own account", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(self);
+    prismaMock.user.update.mockClear();
+    await expect(
+      deactivateManagedUser(prismaMock as unknown as Parameters<typeof deactivateManagedUser>[0], { id: "actor-1", name: "Admin" }, "actor-1"),
+    ).rejects.toMatchObject({ code: "CANNOT_DEACTIVATE_SELF", status: 400 });
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("prevents a GAA from changing their own role but still allows renaming", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(self);
+    await expect(
+      updateManagedUser(prismaMock as unknown as Parameters<typeof updateManagedUser>[0], { id: "actor-1", name: "Admin" }, "actor-1", { role: "PHI" }),
+    ).rejects.toMatchObject({ code: "CANNOT_CHANGE_OWN_ROLE" });
+
+    prismaMock.user.update.mockResolvedValue({ ...self, name: "Renamed" });
+    const result = await updateManagedUser(
+      prismaMock as unknown as Parameters<typeof updateManagedUser>[0],
+      { id: "actor-1", name: "Admin" },
+      "actor-1",
+      { name: "Renamed", role: "GAA", active: true },
+    );
+    expect(result.user.name).toBe("Renamed");
+  });
+});
+
 describe("deactivateManagedUser", () => {
   it("persists active=false in PostgreSQL and records the deactivation", async () => {
     prismaMock.user.findUnique.mockResolvedValue({

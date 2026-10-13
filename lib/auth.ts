@@ -17,11 +17,13 @@ export type AuthContext = {
 
 export class AuthError extends Error {
   status: number;
+  code: string;
 
-  constructor(message: string, status = 403) {
+  constructor(message: string, status = 403, code = status === 401 ? "UNAUTHORIZED" : "ACCESS_DENIED") {
     super(message);
     this.name = "AuthError";
     this.status = status;
+    this.code = code;
   }
 }
 

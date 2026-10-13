@@ -263,8 +263,13 @@ export function EvaluatingOfficerDailyMonitoringClient({
               type="button"
               disabled={isPending || !initialData.selectedLocationId}
               onClick={() => {
-                startTransition(() => {
-                  void submit(false);
+                startTransition(async () => {
+                  // Awaiting keeps isPending true until the request completes (prevents double submits).
+                  try {
+                    await submit(false);
+                  } catch {
+                    setFeedback({ kind: "error", text: "Unable to reach the server. Check your connection and try again." });
+                  }
                 });
               }}
               className="rounded-full border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -275,8 +280,13 @@ export function EvaluatingOfficerDailyMonitoringClient({
               type="button"
               disabled={isPending || !initialData.selectedLocationId}
               onClick={() => {
-                startTransition(() => {
-                  void submit(true);
+                startTransition(async () => {
+                  // Awaiting keeps isPending true until the request completes (prevents double submits).
+                  try {
+                    await submit(true);
+                  } catch {
+                    setFeedback({ kind: "error", text: "Unable to reach the server. Check your connection and try again." });
+                  }
                 });
               }}
               className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"

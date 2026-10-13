@@ -9,6 +9,9 @@ const protectedPrefixes = [
   "/phi",
   "/administration",
   "/vice-chancellor",
+  "/system-administration",
+  "/monthly-reports",
+  "/daily-monitoring",
 ];
 
 function getSupabaseConfig() {
@@ -32,11 +35,7 @@ function isProtectedPath(pathname: string) {
 
 export async function proxy(request: NextRequest) {
   const { url, key } = getSupabaseConfig();
-  const response = NextResponse.next({
-    request: {
-      headers: request.headers,
-    },
-  });
+  let response = NextResponse.next({ request });
 
   const supabase = createServerClient(url, key, {
     cookies: {
@@ -44,10 +43,12 @@ export async function proxy(request: NextRequest) {
         return request.cookies.getAll();
       },
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) => {
-          request.cookies.set(name, value);
-          response.cookies.set(name, value, options);
-        });
+        // Recommended @supabase/ssr pattern: update the request cookies first,
+        // then rebuild the response so refreshed tokens reach both the server
+        // components rendering this request and the browser.
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        response = NextResponse.next({ request });
+        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
       },
     },
   });
@@ -58,17 +59,26 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  const redirectTo = (url: URL) => {
+    const redirect = NextResponse.redirect(url);
+    // Keep any refreshed/cleared auth cookies on redirects as well.
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+    return redirect;
+  };
+
   if (pathname === "/login" && user) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
-    return NextResponse.redirect(redirectUrl);
+    redirectUrl.search = "";
+    return redirectTo(redirectUrl);
   }
 
   if (isProtectedPath(pathname) && !user) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
+    redirectUrl.search = "";
     redirectUrl.searchParams.set("redirectedFrom", pathname);
-    return NextResponse.redirect(redirectUrl);
+    return redirectTo(redirectUrl);
   }
 
   return response;
@@ -85,5 +95,8 @@ export const config = {
     "/phi/:path*",
     "/administration/:path*",
     "/vice-chancellor/:path*",
+    "/system-administration/:path*",
+    "/monthly-reports/:path*",
+    "/daily-monitoring/:path*",
   ],
 };

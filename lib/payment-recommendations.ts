@@ -2,7 +2,7 @@ import { Prisma, type PrismaClient, type UserRole } from "@/app/generated/prisma
 
 type Actor = { id: string; role: UserRole; active: boolean };
 type DecimalLike = Prisma.Decimal;
-export type PaymentRecommendationErrorCode = "ACCESS_DENIED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "LOCKED" | "INVALID_AMOUNT" | "INVALID_COMPLETION" | "REMARKS_REQUIRED" | "INCOMPLETE_REPORT";
+export type PaymentRecommendationErrorCode = "ACCESS_DENIED" | "NOT_ELIGIBLE" | "NOT_FOUND" | "LOCKED" | "INVALID_AMOUNT" | "INVALID_COMPLETION" | "REMARKS_REQUIRED" | "INCOMPLETE_REPORT" | "INVALID_CATEGORY";
 
 export class PaymentRecommendationError extends Error {
   constructor(public code: PaymentRecommendationErrorCode, message: string, public status = 400) { super(message); this.name = "PaymentRecommendationError"; }
@@ -19,7 +19,7 @@ const recommendationSelect = {
 function assertGaa(actor: Actor) { if (!actor.active || actor.role !== "GAA") throw new PaymentRecommendationError("ACCESS_DENIED", "Only active GAA users can manage payment recommendations.", 403); }
 function decimal(value: string | number | DecimalLike) { try { return new Prisma.Decimal(value); } catch { throw new PaymentRecommendationError("INVALID_AMOUNT", "Enter a valid non-negative monetary amount."); } }
 function amount(value: string | number | DecimalLike) { const result = decimal(value); if (result.isNegative() || !result.isFinite()) throw new PaymentRecommendationError("INVALID_AMOUNT", "Amount must be a valid non-negative value."); return result.toDecimalPlaces(2); }
-function completion(value: string | number | DecimalLike) { const result = decimal(value); if (result.isNegative() || result.gt(100)) throw new PaymentRecommendationError("INVALID_COMPLETION", "Completion percentage must be between 0 and 100."); return result.toDecimalPlaces(2); }
+function completion(value: string | number | DecimalLike) { const result = decimal(value); if (!result.isFinite() || result.isNegative() || result.gt(100)) throw new PaymentRecommendationError("INVALID_COMPLETION", "Completion percentage must be between 0 and 100."); return result.toDecimalPlaces(2); }
 function recommended(allocation: DecimalLike, percentage: DecimalLike) { return allocation.mul(percentage).div(100).toDecimalPlaces(2); }
 export function calculateTaskRecommendedAmount(allocationInput: string, completionInput: string) { return recommended(amount(allocationInput), completion(completionInput)); }
 function metadata(value: Record<string, unknown>) { return value as Prisma.InputJsonValue; }

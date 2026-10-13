@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { InvalidRequestError, readJsonBody } from "@/lib/api-errors";
 import { AuthError, requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
@@ -11,6 +12,10 @@ import {
 } from "@/lib/evaluating-officer-assignments";
 
 function toErrorResponse(error: unknown) {
+  if (error instanceof InvalidRequestError) {
+    return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+  }
+
   if (error instanceof AuthError || error instanceof EvaluatingOfficerAssignmentError) {
     const code = "code" in error && typeof error.code === "string" ? error.code : "AUTH_ERROR";
     return NextResponse.json({ error: error.message, code }, { status: error.status });
@@ -48,7 +53,7 @@ export async function PATCH(
   try {
     const { appUser } = await requireRole("GAA");
     const { id } = await context.params;
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await readJsonBody(request);
 
     const input: UpdateEvaluatingOfficerAssignmentInput = {};
 

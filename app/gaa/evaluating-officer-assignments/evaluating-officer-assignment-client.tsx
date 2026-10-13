@@ -527,8 +527,13 @@ export function GaaEvaluatingOfficerAssignmentClient({
                 type="button"
                 disabled={isPending || !draft.userId || !draft.locationId}
                 onClick={() => {
-                  startTransition(() => {
-                    void submitAssignment();
+                  startTransition(async () => {
+                    // Awaiting keeps isPending true until the request completes (prevents double submits).
+                    try {
+                      await submitAssignment();
+                    } catch {
+                      setFeedback({ kind: "error", text: "Unable to reach the server. Check your connection and try again." });
+                    }
                   });
                 }}
                 className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"

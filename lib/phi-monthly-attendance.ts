@@ -1,40 +1,12 @@
 import { Prisma, type PrismaClient, type UserRole } from "@/app/generated/prisma/client";
-import { getBusinessDateString } from "@/lib/business-date";
+import { PHI_MONTHLY_ATTENDANCE_CATEGORIES, type PhiMonthlyAttendanceCategory } from "@/lib/phi-monthly-attendance-categories";
 
-export const PHI_MONTHLY_ATTENDANCE_CATEGORIES = [
-  {
-    key: "HALF_DAY_EMPLOYEES",
-    label: "Half day employees",
-    defaultRate: "800.00",
-  },
-  {
-    key: "HALF_DAY_GRASS_CUTTERS_GULLY_CLEANER_TRACTOR_OPERATOR",
-    label: "Half day Grass cutters/Gully cleaner/Tractor operator",
-    defaultRate: "1370.00",
-  },
-  {
-    key: "HALF_DAY_SUPERVISORS",
-    label: "Half day Supervisors",
-    defaultRate: "1370.00",
-  },
-  {
-    key: "ABSENT_EMPLOYEES",
-    label: "Absent employees",
-    defaultRate: "1600.00",
-  },
-  {
-    key: "ABSENT_GRASS_CUTTERS_GULLY_CLEANER_TRACTOR_OPERATOR",
-    label: "Absent Grass cutters/Gully cleaner/Tractor operator",
-    defaultRate: "2740.00",
-  },
-  {
-    key: "ABSENT_SUPERVISORS",
-    label: "Absent Supervisors",
-    defaultRate: "2740.00",
-  },
-] as const;
-
-export type PhiMonthlyAttendanceCategory = (typeof PHI_MONTHLY_ATTENDANCE_CATEGORIES)[number]["key"];
+export {
+  PHI_MONTHLY_ATTENDANCE_CATEGORIES,
+  PHI_MONTHLY_ATTENDANCE_LOCKED_STATUSES,
+  isPhiMonthlyAttendanceLocked,
+  type PhiMonthlyAttendanceCategory,
+} from "@/lib/phi-monthly-attendance-categories";
 
 export type PhiMonthlyAttendanceRowInput = {
   category: PhiMonthlyAttendanceCategory;
@@ -118,6 +90,10 @@ function periodKey(month: number, year: number) {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
+function periodLabel(month: number, year: number) {
+  return new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
 function statusForSave(existingStatus?: string | null, submitted = false) {
   if (!submitted) return "DRAFT" as const;
   return existingStatus === "CORRECTION_REQUESTED" ? "RESUBMITTED" as const : "SUBMITTED" as const;
@@ -125,7 +101,15 @@ function statusForSave(existingStatus?: string | null, submitted = false) {
 
 function rowMap(rows: PhiMonthlyAttendanceRowInput[]) {
   const map = new Map<PhiMonthlyAttendanceCategory, PhiMonthlyAttendanceRowInput>();
-  for (const row of rows) map.set(row.category, row);
+  for (const row of rows) {
+    if (!categoryLabels.has(row.category)) {
+      throw new PhiMonthlyAttendanceError("INVALID_CATEGORY", "The report contains an unknown attendance category.");
+    }
+    if (map.has(row.category)) {
+      throw new PhiMonthlyAttendanceError("DUPLICATE_CATEGORY", `Category listed more than once: ${getCategoryLabel(row.category)}.`);
+    }
+    map.set(row.category, row);
+  }
   return map;
 }
 
@@ -277,6 +261,16 @@ export async function savePhiMonthlyAttendanceReport(
       throw new PhiMonthlyAttendanceError("REPORT_LOCKED", "This report has already been finalized.", 409);
     }
 
+    // A submitted report is waiting for Administration review. Editing it now
+    // would silently pull it back to DRAFT (or re-send it) under the reviewer.
+    if (existing?.status === "SUBMITTED" || existing?.status === "RESUBMITTED") {
+      throw new PhiMonthlyAttendanceError(
+        "REPORT_PENDING_REVIEW",
+        "This report has been submitted and is awaiting Administration review. It can be edited again only if a correction is requested.",
+        409,
+      );
+    }
+
     const now = new Date();
     const status = statusForSave(existing?.status, submitted);
     const saved = existing
@@ -342,11 +336,13 @@ export async function savePhiMonthlyAttendanceReport(
           data: {
             recipientUserId: admin.id,
             event: "MONTHLY_REPORT_AUTOMATICALLY_SUBMITTED",
-            title: "PHI Monthly Attendance Submitted",
-            message: `PHI monthly attendance report for ${getBusinessDateString(new Date(Date.UTC(year, month - 1, 1)))} has been submitted.`,
+            title: status === "RESUBMITTED" ? "PHI Monthly Attendance Resubmitted" : "PHI Monthly Attendance Submitted",
+            message: `${actor.name}'s PHI monthly attendance report for ${periodLabel(month, year)} has been ${status === "RESUBMITTED" ? "resubmitted after correction" : "submitted"}.`,
             entityType: "PhiMonthlyAttendanceReport",
             entityId: saved.id,
-            dedupeKey: `phi-monthly-attendance-submitted:${saved.id}:${admin.id}`,
+            // One notification per submission event: a resubmission after a
+            // correction must not collide with the original submission's key.
+            dedupeKey: `phi-monthly-attendance-${status.toLowerCase()}:${saved.id}:${now.getTime()}:${admin.id}`,
             metadata: { reportId: saved.id, month, year, status } as Prisma.InputJsonValue,
           },
         });
@@ -433,7 +429,7 @@ export async function decidePhiMonthlyAttendanceReport(
     });
 
     const recipients = decision === "APPROVE"
-      ? await tx.user.findMany({ where: { active: true, role: { in: ["GAA", "PHI"] } }, select: { id: true } })
+      ? await tx.user.findMany({ where: { active: true, OR: [{ role: "GAA" }, { id: current.phiUserId }] }, select: { id: true } })
       : await tx.user.findMany({
           where: {
             active: true,
@@ -451,7 +447,7 @@ export async function decidePhiMonthlyAttendanceReport(
           recipientUserId: recipient.id,
           event: decision === "APPROVE" ? "ADMINISTRATION_APPROVED" : decision === "CORRECTION" ? "CORRECTION_REQUESTED" : "ADMINISTRATION_REJECTED",
           title: decision === "APPROVE" ? "Monthly Attendance Approved" : decision === "CORRECTION" ? "Monthly Attendance Correction Requested" : "Monthly Attendance Rejected",
-          message: `PHI monthly attendance report for ${current.phiUser.name} (${current.month}/${current.year}) has been ${decision === "APPROVE" ? "approved" : decision === "CORRECTION" ? "sent back for correction" : "rejected"}.${remarks ? ` Remarks: ${remarks}` : ""}`,
+          message: `PHI monthly attendance report for ${current.phiUser.name} (${periodLabel(current.month, current.year)}) has been ${decision === "APPROVE" ? "approved" : decision === "CORRECTION" ? "sent back for correction" : "rejected"}.${remarks ? ` Remarks: ${remarks}` : ""}`,
           entityType: "PhiMonthlyAttendanceReport",
           entityId: reportId,
           dedupeKey: `phi-monthly-attendance-review:${review.id}:${recipient.id}`,

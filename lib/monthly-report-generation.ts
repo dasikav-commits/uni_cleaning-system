@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, TaskFrequency } from "@/app/generated/prisma/client";
-import { dateStringToUtcDate, getBusinessDateString, getBusinessTimeZone } from "@/lib/business-date";
+import { dateStringToUtcDate, getBusinessDateString } from "@/lib/business-date";
+import { isTaskScheduledOn } from "@/lib/task-schedule";
 
 export type ReportingPeriod = { month: number; year: number };
 export type MonthlyGenerationOptions = ReportingPeriod & { actorUserId?: string; now?: Date };
@@ -54,18 +55,7 @@ export function getReportingPeriodDates(period: ReportingPeriod): PeriodDates {
 }
 
 function isExpectedTaskDate(task: { frequency: TaskFrequency; createdAt: Date }, date: string) {
-  const taskStart = getBusinessDateString(task.createdAt);
-  if (date < taskStart) return false;
-  const target = dateStringToUtcDate(date);
-  const created = task.createdAt;
-  if (!target) return false;
-  if (task.frequency === "DAILY") return true;
-  if (task.frequency === "WEEKLY") {
-    const formatter = new Intl.DateTimeFormat("en-US", { timeZone: getBusinessTimeZone(), weekday: "short" });
-    return formatter.format(target) === formatter.format(created);
-  }
-  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: getBusinessTimeZone(), day: "2-digit" });
-  return formatter.format(target) === formatter.format(created);
+  return isTaskScheduledOn(task, date);
 }
 
 function iso(value: Date | null) { return value?.toISOString() ?? null; }
@@ -76,7 +66,7 @@ function percentage(passed: number, failed: number) {
   return ((passed * 100) / applicable).toFixed(2);
 }
 
-export function buildTaskSummary(task: Prisma.LocationTaskGetPayload<{ select: typeof locationTaskSelect }>, dates: string[], evaluations: Array<{ evaluationDate: Date; result: string; remark: string | null; evaluatingOfficer: { id: string; name: string }; createdAt: Date; finalizedAt: Date | null; lockedAt: Date | null }>) {
+export function buildTaskSummary(task: Prisma.LocationTaskGetPayload<{ select: typeof locationTaskSelect }>, dates: string[], evaluations: Array<{ id: string; evaluationDate: Date; result: string; remark: string | null; evaluatingOfficer: { id: string; name: string }; createdAt: Date; finalizedAt: Date | null; lockedAt: Date | null }>) {
   const expectedDates = dates.filter((date) => isExpectedTaskDate(task, date));
   const byDate = new Map<string, (typeof evaluations)[number]>();
   for (const evaluation of evaluations) byDate.set(getBusinessDateString(evaluation.evaluationDate), evaluation);
@@ -85,7 +75,7 @@ export function buildTaskSummary(task: Prisma.LocationTaskGetPayload<{ select: t
   const failed = expectedEvaluations.filter((item) => item.result === "X").length;
   const notApplicable = expectedEvaluations.filter((item) => item.result === "NA").length;
   const missing = expectedDates.filter((date) => !byDate.has(date)).length;
-  const history = evaluations.map((item) => ({ id: item.evaluatingOfficer.id, date: getBusinessDateString(item.evaluationDate), result: item.result, remark: item.remark, evaluatingOfficerId: item.evaluatingOfficer.id, evaluatingOfficerName: item.evaluatingOfficer.name, createdAt: item.createdAt.toISOString(), finalizedAt: iso(item.finalizedAt), lockedAt: iso(item.lockedAt) }));
+  const history = evaluations.map((item) => ({ id: item.id, date: getBusinessDateString(item.evaluationDate), result: item.result, remark: item.remark, evaluatingOfficerId: item.evaluatingOfficer.id, evaluatingOfficerName: item.evaluatingOfficer.name, createdAt: item.createdAt.toISOString(), finalizedAt: iso(item.finalizedAt), lockedAt: iso(item.lockedAt) }));
   const remarks = history.filter((item) => item.remark).map((item) => ({ date: item.date, remark: item.remark }));
   return { expectedOccurrences: expectedDates.length, passedOccurrences: passed, failedOccurrences: failed, notApplicableOccurrences: notApplicable, missingOccurrences: missing, completionPercentage: percentage(passed, failed), evaluationHistory: history as unknown as Prisma.InputJsonValue, taskRemarks: remarks as unknown as Prisma.InputJsonValue };
 }
@@ -165,7 +155,8 @@ export async function generateMonthlyReportsForPeriod(
       else result.reportsIncomplete += 1;
       if (processed.errors.length) result.errors.push({ locationId: location.id, location: location.name, message: processed.errors.join("; ") });
     } catch (error) {
-      result.errors.push({ locationId: location.id, location: location.name, message: error instanceof Error ? "Unable to process this location." : "Unable to process this location." });
+      result.errors.push({ locationId: location.id, location: location.name, message: "Unable to process this location." });
+      console.error(`Monthly report generation failed for location ${location.id}`, error);
     }
   }
   return result;

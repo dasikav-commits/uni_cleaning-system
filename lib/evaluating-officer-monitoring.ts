@@ -16,6 +16,7 @@ import {
   normalizeDateString,
 } from "@/lib/business-date";
 import { canEvaluatingOfficerAccessLocation } from "@/lib/evaluating-officer-assignments";
+import { isTaskScheduledOn } from "@/lib/task-schedule";
 
 export const allowedEvaluationResults = ["P", "X", "NA"] as const;
 export type EvaluationResultValue = (typeof allowedEvaluationResults)[number];
@@ -199,45 +200,8 @@ function assertTodayOnly(selectedDate: string) {
   }
 }
 
-function getBusinessWeekday(date: Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: getBusinessTimeZone(),
-    weekday: "short",
-  }).format(date);
-}
-
-function getBusinessDayOfMonth(date: Date) {
-  return Number(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: getBusinessTimeZone(),
-      day: "2-digit",
-    }).format(date),
-  );
-}
-
 function isEligibleForDate(task: { frequency: TaskFrequency; createdAt: Date }, date: string) {
-  if (!isValidDateString(date)) {
-    return false;
-  }
-
-  const target = dateStringToUtcDate(date);
-  if (!target) {
-    return false;
-  }
-
-  if (getBusinessDate(target) < getBusinessDate(task.createdAt)) {
-    return false;
-  }
-
-  if (task.frequency === "DAILY") {
-    return true;
-  }
-
-  if (task.frequency === "WEEKLY") {
-    return getBusinessWeekday(target) === getBusinessWeekday(task.createdAt);
-  }
-
-  return getBusinessDayOfMonth(target) === getBusinessDayOfMonth(task.createdAt);
+  return isTaskScheduledOn(task, date);
 }
 
 function mapEvaluation(record: EvaluationRecord): OfficerMonitoringTask {

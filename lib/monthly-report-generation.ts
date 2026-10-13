@@ -86,8 +86,12 @@ async function resolveActorUserId(prisma: Pick<PrismaClient, "user">, actorUserI
   throw new MonthlyReportGenerationError("SYSTEM_ACTOR_REQUIRED", "Monthly processing requires a configured system actor.", 500);
 }
 
-async function processLocation(prisma: PrismaClient, period: ReportingPeriod, dates: PeriodDates, location: { id: string; code: string; name: string }, actorUserId: string) {
-  const tasks = await prisma.locationTask.findMany({ where: { locationId: location.id, active: true }, select: locationTaskSelect, orderBy: [{ createdAt: "asc" }] });
+/**
+ * Collects everything a monthly report for one location is built from: task
+ * summaries, PHI attendance history and the list of missing records.
+ */
+export async function collectLocationReportData(prisma: Pick<PrismaClient, "locationTask" | "dailyCleaningEvaluation" | "dailyAttendanceEvaluation">, dates: PeriodDates, location: { id: string }) {
+  const tasks = await prisma.locationTask.findMany({ where: { locationId: location.id, active: true, task: { active: true } }, select: locationTaskSelect, orderBy: [{ createdAt: "asc" }] });
   const taskIds = tasks.map((task) => task.id);
   const [evaluations, attendance] = await Promise.all([
     taskIds.length === 0 ? [] : prisma.dailyCleaningEvaluation.findMany({ where: { locationId: location.id, locationTaskId: { in: taskIds }, evaluationDate: { gte: dates.start, lt: dates.endExclusive } }, orderBy: [{ evaluationDate: "asc" }, { createdAt: "asc" }], select: { id: true, locationTaskId: true, evaluationDate: true, result: true, remark: true, createdAt: true, finalizedAt: true, lockedAt: true, evaluatingOfficer: { select: { id: true, name: true } } } }),
@@ -102,6 +106,16 @@ async function processLocation(prisma: PrismaClient, period: ReportingPeriod, da
   const errors = [...missingEvaluations, ...(missingAttendance.length ? [`${missingAttendance.length} missing PHI total-present record(s)`] : [])];
   const complete = errors.length === 0;
   const processingError = complete ? null : errors.join("; ");
+  return { summaries, attendanceHistory, errors, complete, processingError };
+}
+
+/** Rows for monthlyTaskSummary.createMany for the given report. */
+export function buildTaskSummaryRows(reportId: string, summaries: Awaited<ReturnType<typeof collectLocationReportData>>["summaries"]) {
+  return summaries.map(({ task, summary }) => ({ reportId, locationTaskId: task.id, taskNameSnapshot: task.task.name, categorySnapshot: task.task.category, frequencySnapshot: task.frequency, allocatedAmount: task.allocatedAmount, recommendedAmount: null, completionPercentage: summary.completionPercentage, expectedOccurrences: summary.expectedOccurrences, passedOccurrences: summary.passedOccurrences, failedOccurrences: summary.failedOccurrences, notApplicableOccurrences: summary.notApplicableOccurrences, missingOccurrences: summary.missingOccurrences, evaluationHistory: summary.evaluationHistory, taskRemarks: summary.taskRemarks }));
+}
+
+async function processLocation(prisma: PrismaClient, period: ReportingPeriod, dates: PeriodDates, location: { id: string; code: string; name: string }, actorUserId: string) {
+  const { summaries, attendanceHistory, errors, complete, processingError } = await collectLocationReportData(prisma, dates, location);
   let notificationsCreated = 0;
   let reportCreated = false;
   let reportId = "";
@@ -116,7 +130,7 @@ async function processLocation(prisma: PrismaClient, period: ReportingPeriod, da
       // A previously incomplete draft becomes a newly submitted report on completion.
       reportCreated = !existing || (existing.status === "DRAFT" && complete);
       await tx.monthlyTaskSummary.deleteMany({ where: { reportId: report.id } });
-      if (summaries.length) await tx.monthlyTaskSummary.createMany({ data: summaries.map(({ task, summary }) => ({ reportId: report.id, locationTaskId: task.id, taskNameSnapshot: task.task.name, categorySnapshot: task.task.category, frequencySnapshot: task.frequency, allocatedAmount: task.allocatedAmount, recommendedAmount: null, completionPercentage: summary.completionPercentage, expectedOccurrences: summary.expectedOccurrences, passedOccurrences: summary.passedOccurrences, failedOccurrences: summary.failedOccurrences, notApplicableOccurrences: summary.notApplicableOccurrences, missingOccurrences: summary.missingOccurrences, evaluationHistory: summary.evaluationHistory, taskRemarks: summary.taskRemarks })) });
+      if (summaries.length) await tx.monthlyTaskSummary.createMany({ data: buildTaskSummaryRows(report.id, summaries) });
       await tx.activityLog.create({ data: { userId: actorUserId, action: "MONTHLY_REPORT_GENERATED", entityType: "MonthlyEvaluationReport", entityId: report.id, description: complete ? "Monthly evaluation report generated." : "Incomplete monthly evaluation report recorded.", metadata: { month: period.month, year: period.year, locationId: location.id, status: complete ? "SUBMITTED" : "DRAFT", isComplete: complete } as Prisma.InputJsonValue } });
       if (!complete) return;
       await tx.activityLog.create({ data: { userId: actorUserId, action: "REPORT_SUBMITTED", entityType: "MonthlyEvaluationReport", entityId: report.id, description: "Monthly evaluation report submitted automatically.", metadata: { month: period.month, year: period.year, locationId: location.id, status: "SUBMITTED" } as Prisma.InputJsonValue } });

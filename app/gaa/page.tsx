@@ -113,6 +113,15 @@ export default async function GaaPage() {
             </p>
           </Link>
           <Link
+            href="/gaa/phi-assignments"
+            className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow-md"
+          >
+            <p className="text-sm font-semibold text-slate-950">PHI Assignments</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Assign active PHIs to locations for daily worker attendance.
+            </p>
+          </Link>
+          <Link
             href="/monthly-reports"
             className="rounded-3xl border border-cyan-200 bg-cyan-50 p-5 shadow-sm transition hover:bg-cyan-100"
           >

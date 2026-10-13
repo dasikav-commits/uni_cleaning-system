@@ -51,12 +51,14 @@ export async function getPHIDashboardData(prisma: Pick<PrismaClient, "pHIAssignm
   return { authorizedLocations, today, todayEntries, todayTotal: todayTotal._sum.totalPresentCount ?? 0, currentMonthEntries };
 }
 
-export async function getViceChancellorDashboardData(prisma: Pick<PrismaClient, "monthlyEvaluationReport">) {
+export async function getViceChancellorDashboardData(prisma: Pick<PrismaClient, "paymentRecommendation">) {
+  // The VC reviews payment recommendations (not monthly reports, which never
+  // carry VC statuses), so the counts must come from that table.
   const [pending, approved, rejected, clarification] = await Promise.all([
-    prisma.monthlyEvaluationReport.count({ where: { status: "VC_PENDING" } }),
-    prisma.monthlyEvaluationReport.count({ where: { status: "VC_APPROVED" } }),
-    prisma.monthlyEvaluationReport.count({ where: { status: "VC_REJECTED" } }),
-    prisma.monthlyEvaluationReport.count({ where: { status: "CLARIFICATION_REQUESTED" } }),
+    prisma.paymentRecommendation.count({ where: { status: "VC_PENDING" } }),
+    prisma.paymentRecommendation.count({ where: { status: "VC_APPROVED" } }),
+    prisma.paymentRecommendation.count({ where: { status: "VC_REJECTED" } }),
+    prisma.paymentRecommendation.count({ where: { status: "CLARIFICATION_REQUESTED" } }),
   ]);
   return { pending, approved, rejected, clarification };
 }

@@ -17,14 +17,16 @@ function assertGaa(actor: Actor) { if (!actor.active || actor.role !== "GAA") th
 
 export async function getFinalReport(prisma: Pick<PrismaClient, "paymentRecommendation" | "monthlyEvaluationReport" | "activityLog">, actor: Actor, year: number, month: number) {
   assertGaa(actor); if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) throw new PaymentRecommendationError("NOT_FOUND", "A valid reporting month is required.");
-  const recommendations = await prisma.paymentRecommendation.findMany({ where: { status: "FINALIZED", report: { year, month, status: "ADMIN_APPROVED" } }, orderBy: { report: { location: { code: "asc" } } }, select: recommendationSelect });
+  const recommendations = await prisma.paymentRecommendation.findMany({ where: { status: { in: ["FINALIZED", "VC_APPROVED"] }, report: { year, month, status: "ADMIN_APPROVED" } }, orderBy: { report: { location: { code: "asc" } } }, select: recommendationSelect });
   // Count the approved *reports*, not just the recommendations that exist: an
   // approved location without any recommendation must also block the final
   // report, otherwise that location would be silently left out of the payment.
   const approvedCount = await prisma.monthlyEvaluationReport.count({ where: { year, month, status: "ADMIN_APPROVED" } });
   if (!approvedCount) throw new PaymentRecommendationError("INCOMPLETE_REPORT", "There are no Administration-approved location reports for this month.", 409);
-  if (recommendations.length !== approvedCount) throw new PaymentRecommendationError("INCOMPLETE_REPORT", `All Administration-approved locations need a finalized payment recommendation before generating the final report (${recommendations.length} of ${approvedCount} finalized).`, 409);
+  if (recommendations.length !== approvedCount) throw new PaymentRecommendationError("INCOMPLETE_REPORT", `All Administration-approved locations need a finalized or Vice Chancellor-approved payment recommendation before generating the final report (${recommendations.length} of ${approvedCount} ready).`, 409);
   const totals = recommendations.reduce((result, recommendation) => ({ cleaning: result.cleaning.add(recommendation.locationCleaningTotal), additional: result.additional.add(recommendation.additionalTasks.reduce((sum, task) => sum.add(task.recommendedAmount), new Prisma.Decimal(0))) }), { cleaning: new Prisma.Decimal(0), additional: new Prisma.Decimal(0) });
-  const history = await prisma.activityLog.findMany({ where: { OR: [{ entityType: "PaymentRecommendation", entityId: { in: recommendations.map((item) => item.id) } }, { entityType: "MonthlyEvaluationReport", entityId: { in: recommendations.map((item) => item.report.id) } }] }, orderBy: { timestamp: "asc" }, select: { action: true, description: true, timestamp: true, user: { select: { name: true } }, metadata: true } });
+  // Administration review decisions are logged with entityType "EvaluationReport",
+  // generation events with "MonthlyEvaluationReport"; the history needs both.
+  const history = await prisma.activityLog.findMany({ where: { OR: [{ entityType: "PaymentRecommendation", entityId: { in: recommendations.map((item) => item.id) } }, { entityType: { in: ["MonthlyEvaluationReport", "EvaluationReport"] }, entityId: { in: recommendations.map((item) => item.report.id) } }] }, orderBy: { timestamp: "asc" }, select: { action: true, description: true, timestamp: true, user: { select: { name: true } }, metadata: true } });
   return { year, month, recommendations, history, totals: { cleaning: totals.cleaning.toDecimalPlaces(2), additional: totals.additional.toDecimalPlaces(2), overall: totals.cleaning.add(totals.additional).toDecimalPlaces(2) } };
 }

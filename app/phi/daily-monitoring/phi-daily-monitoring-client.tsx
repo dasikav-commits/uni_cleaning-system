@@ -21,6 +21,12 @@ type Draft = {
 
 export function PHIDailyMonitoringClient({ initialData, authorizedLocations, currentFilters }: Props) {
   const router = useRouter();
+  // Finalized records are read-only unless Administration requested a correction
+  // for that month; months already submitted to Administration are closed.
+  const readOnly =
+    !initialData.selectedLocationId ||
+    Boolean(initialData.monthClosed) ||
+    (initialData.finalized && !initialData.correctionMode);
   const [draft, setDraft] = useState<Draft>({
     totalPresentCount: initialData.totalPresentCount?.toString() ?? "",
     remark: initialData.remark ?? "",
@@ -150,7 +156,7 @@ export function PHIDailyMonitoringClient({ initialData, authorizedLocations, cur
               type="number"
               min={0}
               value={draft.totalPresentCount}
-              disabled={!initialData.selectedLocationId || initialData.finalized}
+              disabled={readOnly}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, totalPresentCount: event.target.value }))
               }
@@ -162,7 +168,7 @@ export function PHIDailyMonitoringClient({ initialData, authorizedLocations, cur
             <span className="text-sm font-medium text-slate-700">Remark</span>
             <textarea
               value={draft.remark}
-              disabled={!initialData.selectedLocationId || initialData.finalized}
+              disabled={readOnly}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, remark: event.target.value }))
               }
@@ -182,7 +188,7 @@ export function PHIDailyMonitoringClient({ initialData, authorizedLocations, cur
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={isPending || !initialData.selectedLocationId || initialData.finalized}
+              disabled={isPending || readOnly}
               onClick={() => {
                 startTransition(async () => {
                   // Awaiting keeps isPending true until the request completes (prevents double submits).
@@ -199,7 +205,7 @@ export function PHIDailyMonitoringClient({ initialData, authorizedLocations, cur
             </button>
             <button
               type="button"
-              disabled={isPending || !initialData.selectedLocationId || initialData.finalized}
+              disabled={isPending || readOnly}
               onClick={() => {
                 startTransition(async () => {
                   // Awaiting keeps isPending true until the request completes (prevents double submits).
@@ -217,7 +223,15 @@ export function PHIDailyMonitoringClient({ initialData, authorizedLocations, cur
           </div>
         </div>
 
-        {initialData.finalized ? (
+        {initialData.monthClosed ? (
+          <p className="mt-4 text-sm text-slate-500">
+            This month&apos;s monitoring report has already been submitted to Administration, so its attendance can no longer be changed.
+          </p>
+        ) : initialData.correctionMode ? (
+          <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Administration requested a correction for this month&apos;s report. You can update this attendance record, even if it is finalized.
+          </p>
+        ) : initialData.finalized ? (
           <p className="mt-4 text-sm text-slate-500">
             This attendance record is finalized and cannot be changed.
           </p>

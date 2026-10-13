@@ -16,6 +16,9 @@ type PrismaTxMock = {
     create: Mock;
     update: Mock;
   };
+  locationTask: {
+    updateMany: Mock;
+  };
   activityLog: {
     create: Mock;
   };
@@ -37,6 +40,9 @@ function createPrismaMock(): PrismaMock {
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+    },
+    locationTask: {
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     activityLog: {
       create: vi.fn(),
@@ -231,6 +237,11 @@ describe("updateManagedTask", () => {
       },
     });
     expect(result.task.frequency).toBe("MONTHLY");
+    // Existing location assignments must follow the task's new schedule.
+    expect(prismaMock.locationTask.updateMany).toHaveBeenCalledWith({
+      where: { taskId: "task-1" },
+      data: { frequency: "MONTHLY" },
+    });
     expect(prismaMock.activityLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: "CLEANING_TASK_UPDATED",

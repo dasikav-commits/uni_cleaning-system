@@ -7,6 +7,7 @@ import {
   isValidDateString,
   normalizeDateString,
 } from "@/lib/business-date";
+import { getReportForDate } from "@/lib/monthly-report-corrections";
 import { canPhiAccessLocation } from "@/lib/phi-assignments";
 
 export type PHIAuthorizedLocation = {
@@ -29,6 +30,10 @@ export type PHIMonitoringData = {
   finalized: boolean;
   finalizedAt: Date | null;
   lockedAt: Date | null;
+  /** The month's report was sent back by Administration: finalized records may be corrected. */
+  correctionMode?: boolean;
+  /** The month's report has gone to Administration: the record is read-only. */
+  monthClosed?: boolean;
 };
 
 export type PHIAttendanceHistoryItem = {
@@ -204,7 +209,7 @@ export async function listPhiAuthorizedLocations(
 export async function getPHIMonitoringData(
   prisma: Pick<
     PrismaClient,
-    "pHIAssignment" | "location" | "workerLocationAssignment" | "dailyAttendanceEvaluation"
+    "pHIAssignment" | "location" | "workerLocationAssignment" | "dailyAttendanceEvaluation" | "monthlyEvaluationReport"
   >,
   phiUserId: string,
   selectedLocationId: string,
@@ -270,6 +275,15 @@ export async function getPHIMonitoringData(
     },
   });
 
+  // Mirrors the rules enforced in savePHIAttendanceEvaluation.
+  let correctionMode = false;
+  let monthClosed = false;
+  if (normalizedDate.slice(0, 7) < getBusinessDate().slice(0, 7)) {
+    const report = await getReportForDate(prisma, locationId, normalizedDate);
+    correctionMode = report?.status === "CORRECTION_REQUESTED";
+    monthClosed = Boolean(report && report.status !== "DRAFT" && !correctionMode);
+  }
+
   return {
     selectedDate: normalizedDate,
     selectedLocationId: locationId,
@@ -281,6 +295,8 @@ export async function getPHIMonitoringData(
     finalized: Boolean(current?.finalized || current?.finalizedAt || current?.lockedAt),
     finalizedAt: current?.finalizedAt ?? null,
     lockedAt: current?.lockedAt ?? null,
+    correctionMode,
+    monthClosed,
   };
 }
 
@@ -320,7 +336,7 @@ export async function listPHIAttendanceHistory(
 export async function savePHIAttendanceEvaluation(
   prisma: Pick<
     PrismaClient,
-    "pHIAssignment" | "location" | "dailyAttendanceEvaluation" | "activityLog" | "$transaction"
+    "pHIAssignment" | "location" | "dailyAttendanceEvaluation" | "monthlyEvaluationReport" | "activityLog" | "$transaction"
   >,
   actorUser: Pick<User, "id" | "name" | "role" | "active">,
   input: SavePHIAttendanceInput,
@@ -361,6 +377,34 @@ export async function savePHIAttendanceEvaluation(
     throw new PHIAttendanceError("LOCATION_NOT_FOUND", "Location not found.", 404);
   }
 
+  // Attendance for a month whose report has already gone to Administration is
+  // frozen, unless Administration sent that report back for correction.
+  let correctionMode = false;
+  let correctionReportId: string | null = null;
+  if (attendanceDateText.slice(0, 7) < getBusinessDate().slice(0, 7)) {
+    const report = await getReportForDate(prisma, locationId, attendanceDateText);
+    if (report?.status === "CORRECTION_REQUESTED") {
+      correctionMode = true;
+      correctionReportId = report.id;
+    } else if (report && report.status !== "DRAFT") {
+      throw new PHIAttendanceError(
+        "REPORT_SUBMITTED",
+        "That month's monitoring report has already been submitted, so its attendance can no longer be changed.",
+        409,
+      );
+    }
+  }
+
+  // Inactive locations are excluded from monthly processing, so attendance
+  // recorded for them would silently be lost (corrections are still allowed).
+  if (!location.active && !correctionMode) {
+    throw new PHIAttendanceError(
+      "LOCATION_INACTIVE",
+      "This location is inactive. Attendance cannot be recorded for it.",
+      409,
+    );
+  }
+
   const attendanceDate = dateStringToUtcDate(attendanceDateText);
   if (!attendanceDate) {
     throw new PHIAttendanceError("INVALID_DATE", "The selected date is not valid.");
@@ -378,7 +422,7 @@ export async function savePHIAttendanceEvaluation(
     },
   });
 
-  if (existing?.lockedAt && !(finalize && existing.totalPresentCount === totalPresentCount && existing.remark === remark)) {
+  if (existing?.lockedAt && !correctionMode && !(finalize && existing.totalPresentCount === totalPresentCount && existing.remark === remark)) {
     throw new PHIAttendanceError(
       "ATTENDANCE_FINALIZED",
       "Finalized attendance records cannot be modified.",
@@ -407,18 +451,27 @@ export async function savePHIAttendanceEvaluation(
         await tx.activityLog.create({
           data: {
             userId: actorUser.id,
-            action: (finalize
+            action: (finalize && !existing.lockedAt
               ? "ATTENDANCE_EVALUATION_FINALIZED"
               : "ATTENDANCE_EVALUATION_UPDATED") as ActivityAction,
             entityType: "DailyAttendanceEvaluation",
             entityId: updated.id,
-            description: `${finalize ? "Finalized" : "Updated"} attendance evaluation for ${location.code}`,
+            description: correctionMode && existing.lockedAt
+              ? `Corrected finalized attendance evaluation for ${location.code}`
+              : `${finalize ? "Finalized" : "Updated"} attendance evaluation for ${location.code}`,
             metadata: {
               locationId,
               phiId: actorUser.id,
               attendanceDate: attendanceDateText,
               totalPresentCount,
               remark,
+              ...(correctionMode
+                ? {
+                    previousTotalPresentCount: existing.totalPresentCount,
+                    previousRemark: existing.remark ?? null,
+                    correctionReportId,
+                  }
+                : {}),
             } as Prisma.InputJsonValue,
           },
         });

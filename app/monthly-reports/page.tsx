@@ -4,6 +4,8 @@ import { AppShell } from "@/app/_components/app-shell";
 import { getAuthContext } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { listMonthlyReportReferenceData, listMonthlyReports } from "@/lib/monthly-reports";
+import { getPreviousReportingPeriod } from "@/lib/monthly-report-generation";
+import { RunMonthlyProcessing } from "./run-monthly-processing";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const roles = ["GAA", "ADMINISTRATION_OFFICER", "EVALUATING_OFFICER", "PHI", "VICE_CHANCELLOR"] as const;
@@ -29,6 +31,7 @@ export default async function MonthlyReportsPage({ searchParams }: { searchParam
   return <AppShell user={appUser}>
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <header><p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-700">Reporting</p><h1 className="mt-2 text-3xl font-semibold text-slate-950">Monthly Reports</h1><p className="mt-2 text-sm text-slate-600">View automatically generated monthly cleaning monitoring reports.</p></header>
+      {appUser.role === "GAA" ? (() => { const previous = getPreviousReportingPeriod(); return <RunMonthlyProcessing defaultMonth={previous.month} defaultYear={previous.year} />; })() : null}
       <form className="grid gap-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:grid-cols-2 lg:grid-cols-5" method="get">
         <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Search</span><input name="query" defaultValue={valueOf(params.query)} placeholder="Search location..." className="w-full rounded-2xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-900" /></label>
         <label><span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Month</span><select name="month" defaultValue={month ?? ""} className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm"><option value="">All months</option>{Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Intl.DateTimeFormat("en", { month: "long" }).format(new Date(Date.UTC(2020, i, 1)))}</option>)}</select></label>

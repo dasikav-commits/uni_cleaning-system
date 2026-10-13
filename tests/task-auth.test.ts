@@ -74,7 +74,7 @@ describe("task authorization", () => {
 
     await expect(requireRole("GAA")).rejects.toMatchObject({
       status: 403,
-      message: "Your account is inactive.",
+      message: expect.stringContaining("Your account is not active"),
     });
   });
 

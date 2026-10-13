@@ -224,7 +224,7 @@ export function GaaUserManagementClient({ initialData, currentFilters }: Props) 
   };
 
   const deleteUser = async (user: UserListItem) => {
-    if (!window.confirm(`Permanently delete ${user.name} from PostgreSQL and Supabase Auth? This cannot be undone.`)) return;
+    if (!window.confirm(`Permanently delete ${user.name} from PostgreSQL and Supabase Auth? This cannot be undone.\n\nOnly accounts with no assignments, records or audit history can be deleted; deactivate other accounts instead.`)) return;
     setTableBusyId(user.id);
     setFeedback(null);
     try {

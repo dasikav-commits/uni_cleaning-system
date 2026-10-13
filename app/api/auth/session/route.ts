@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getAuthContext, roleRedirectPath } from "@/lib/auth";
+import { getAuthContext, INACTIVE_ACCOUNT_MESSAGE, roleRedirectPath } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isApplicationRole } from "@/lib/application-roles";
+import { provisionSelfServiceUser } from "@/lib/account-provisioning";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
@@ -18,17 +18,19 @@ async function completeApplicationSession(sessionUser: SupabaseUser) {
   let user = appUser;
   if (!user) {
     try {
-      user = await prisma.user.create({
-        data: {
-          id: sessionUser.id,
-          email: sessionUser.email || "",
-          name: sessionUser.user_metadata?.name || sessionUser.email?.split("@")[0] || "User",
-          role: isApplicationRole(sessionUser.user_metadata?.role)
-            ? sessionUser.user_metadata.role
-            : "GAA",
-          active: true,
-        },
-      });
+      // Never grant access automatically: user_metadata is editable by the
+      // user, so the profile is created inactive and must be approved by a
+      // GAA (except the very first GAA, see provisionSelfServiceUser).
+      const metadataName = sessionUser.user_metadata?.name;
+      ({ user } = await provisionSelfServiceUser(prisma, {
+        id: sessionUser.id,
+        email: (sessionUser.email || "").toLowerCase(),
+        name:
+          (typeof metadataName === "string" && metadataName.trim()) ||
+          sessionUser.email?.split("@")[0] ||
+          "User",
+        requestedRole: sessionUser.user_metadata?.role,
+      }));
     } catch (error: unknown) {
       // User might already exist if there's a race condition
       const errorCode =
@@ -59,7 +61,10 @@ async function completeApplicationSession(sessionUser: SupabaseUser) {
   }
 
   if (!user.active) {
-    return NextResponse.json({ error: "Your account is inactive." }, { status: 403 });
+    return NextResponse.json(
+      { error: INACTIVE_ACCOUNT_MESSAGE, code: "ACCOUNT_INACTIVE" },
+      { status: 403 },
+    );
   }
 
   const redirectTo = roleRedirectPath[user.role];

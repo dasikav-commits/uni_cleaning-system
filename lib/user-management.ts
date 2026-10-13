@@ -424,6 +424,26 @@ export async function deleteManagedUser(
     select: {
       id: true,
       email: true,
+      _count: {
+        select: {
+          evaluatingOfficerAssignments: true,
+          phiAssignments: true,
+          evaluations: true,
+          attendances: true,
+          dailyAttendanceEvaluations: true,
+          phiMonthlyAttendanceReports: true,
+          phiMonthlyAttendanceReviews: true,
+          administrationReviews: true,
+          createdRecommendations: true,
+          submittedRecommendations: true,
+          finalizedRecommendations: true,
+          taskCalculationChanges: true,
+          workerCalculationChanges: true,
+          createdAdditionalTasks: true,
+          vcApprovals: true,
+          activityLogs: true,
+        },
+      },
     },
   });
 
@@ -431,12 +451,39 @@ export async function deleteManagedUser(
     throw new UserManagementError("USER_NOT_FOUND", "User not found.", 404);
   }
 
-  const deletedUser = await prisma.$transaction(async (tx) => {
-    await tx.activityLog.deleteMany({ where: { userId } });
-    await tx.notification.deleteMany({ where: { recipientUserId: userId } });
-    const deleted = await tx.user.delete({ where: { id: userId } });
-    return deleted;
-  });
+  // Permanent deletion is only for accounts that never did anything. Anyone
+  // with assignments, evaluations, reviews or audit-trail entries must be
+  // deactivated instead, otherwise the audit history would be destroyed.
+  const counts = (existing._count ?? {}) as Record<string, number>;
+  if (Object.values(counts).some((count) => count > 0)) {
+    throw new UserManagementError(
+      "USER_HAS_HISTORY",
+      "This user has assignments, monitoring records or audit history and cannot be permanently deleted. Deactivate the account instead so the history is preserved.",
+      409,
+    );
+  }
+
+  let deletedUser: User;
+  try {
+    deletedUser = await prisma.$transaction(async (tx) => {
+      // Notifications addressed to the user are personal inbox items, not audit records.
+      await tx.notification.deleteMany({ where: { recipientUserId: userId } });
+      return tx.user.delete({ where: { id: userId } });
+    });
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
+    if (code === "P2003") {
+      throw new UserManagementError(
+        "USER_HAS_HISTORY",
+        "This user is still linked to other records and cannot be permanently deleted. Deactivate the account instead.",
+        409,
+      );
+    }
+    if (code === "P2025") {
+      throw new UserManagementError("USER_NOT_FOUND", "User not found.", 404);
+    }
+    throw error;
+  }
 
   // Audit logging must not make an already completed deletion appear to fail.
   try {

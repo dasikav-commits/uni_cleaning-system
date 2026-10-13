@@ -32,7 +32,17 @@ export async function generateFinalPdf(data: FinalReport) {
     for (const review of recommendation.report.administrationReviews) document.font("Helvetica").text(`${review.decision} | ${review.reviewer.name} | ${review.reviewedAt.toLocaleDateString()} | ${review.remarks ?? "-"}`);
   }
   document.addPage().fontSize(18).font("Helvetica-Bold").text("FINAL RECOMMENDED PAYMENT", { align: "center" }).moveDown().fontSize(22).text(money(data.totals.overall), { align: "center" });
-  const range = document.bufferedPageRange(); for (let index = range.start; index < range.start + range.count; index += 1) { document.switchToPage(index); document.fontSize(8).font("Helvetica").text(`University Cleaning System | Final Monthly Payment Recommendation Report | Page ${index + 1} of ${range.count}`, 42, 800, { align: "center", width: 510 }); }
+  // The footer sits inside the bottom margin. Temporarily drop the margin while
+  // writing it, otherwise PDFKit treats it as overflow and appends a blank page
+  // for every footer (doubling the page count).
+  const range = document.bufferedPageRange();
+  for (let index = range.start; index < range.start + range.count; index += 1) {
+    document.switchToPage(index);
+    const bottomMargin = document.page.margins.bottom;
+    document.page.margins.bottom = 0;
+    document.fontSize(8).font("Helvetica").text(`University Cleaning System | Final Monthly Payment Recommendation Report | Page ${index + 1} of ${range.count}`, 42, document.page.height - 36, { align: "center", width: document.page.width - 84, lineBreak: false });
+    document.page.margins.bottom = bottomMargin;
+  }
   document.end();
   return result;
 }
@@ -51,4 +61,4 @@ export async function generateFinalExcel(data: FinalReport) {
 
 function formatSheet(sheet: ExcelJS.Worksheet, formats: string[]) { for (let row = 2; row <= sheet.rowCount; row += 1) formats.forEach((format, index) => { sheet.getCell(row, index + 2).numFmt = format; }); }
 
-export async function loadFinalReport(prisma: Pick<PrismaClient, "paymentRecommendation" | "activityLog">, actor: { id: string; role: UserRole; active: boolean }, year: number, month: number) { return getFinalReport(prisma, actor, year, month); }
+export async function loadFinalReport(prisma: Pick<PrismaClient, "paymentRecommendation" | "monthlyEvaluationReport" | "activityLog">, actor: { id: string; role: UserRole; active: boolean }, year: number, month: number) { return getFinalReport(prisma, actor, year, month); }

@@ -10,7 +10,9 @@ export default async function ProfilePage() {
   }
 
   if (!appUser) {
-    redirect("/login");
+    // /login would bounce a signed-in user straight back; /dashboard explains
+    // missing or inactive accounts and offers a logout button.
+    redirect("/dashboard");
   }
 
   return (

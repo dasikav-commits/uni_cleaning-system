@@ -62,8 +62,11 @@ export default async function PhiMonthlyAttendancePage({ searchParams }: { searc
   const today = getBusinessDateString();
   const defaultMonth = Number(today.slice(5, 7));
   const defaultYear = Number(today.slice(0, 4));
-  const month = Number(valueOf(params.month)) || defaultMonth;
-  const year = Number(valueOf(params.year)) || defaultYear;
+  const requestedMonth = Number(valueOf(params.month));
+  const requestedYear = Number(valueOf(params.year));
+  // Ignore out-of-range query values (e.g. ?month=13) instead of creating a report for an impossible period.
+  const month = Number.isInteger(requestedMonth) && requestedMonth >= 1 && requestedMonth <= 12 ? requestedMonth : defaultMonth;
+  const year = Number.isInteger(requestedYear) && requestedYear >= 1970 && requestedYear <= defaultYear + 1 ? requestedYear : defaultYear;
   const report = await getPhiMonthlyAttendanceReportForPeriod(prisma, { id: appUser.id, role: appUser.role }, month, year);
   const initialReport = report ? serializeReport(report) : null;
 

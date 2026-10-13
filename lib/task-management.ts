@@ -276,7 +276,7 @@ export async function createManagedTask(
 }
 
 export async function updateManagedTask(
-  prisma: Pick<PrismaClient, "cleaningTask" | "activityLog" | "$queryRaw">,
+  prisma: Pick<PrismaClient, "cleaningTask" | "locationTask" | "activityLog" | "$queryRaw" | "$transaction">,
   actorUser: { id: string; name: string },
   taskId: string,
   input: UpdateCleaningTaskInput,
@@ -354,10 +354,22 @@ export async function updateManagedTask(
 
   let task: CleaningTask;
   try {
-    task = await prisma.cleaningTask.update({
-      where: { id: taskId },
-      data: updates,
-    });
+    const newFrequency = updates.frequency as TaskFrequency | undefined;
+    if (newFrequency) {
+      // Location assignments keep their own copy of the frequency, which daily
+      // monitoring and monthly reports use to decide when a task is due. Keep
+      // them in step with the task, or they would follow the old schedule.
+      task = await prisma.$transaction(async (tx) => {
+        const updated = await tx.cleaningTask.update({ where: { id: taskId }, data: updates });
+        await tx.locationTask.updateMany({ where: { taskId }, data: { frequency: newFrequency } });
+        return updated;
+      });
+    } else {
+      task = await prisma.cleaningTask.update({
+        where: { id: taskId },
+        data: updates,
+      });
+    }
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw new CleaningTaskManagementError(
@@ -393,7 +405,7 @@ export async function updateManagedTask(
 }
 
 export async function activateManagedTask(
-  prisma: Pick<PrismaClient, "cleaningTask" | "activityLog" | "$queryRaw">,
+  prisma: Pick<PrismaClient, "cleaningTask" | "locationTask" | "activityLog" | "$queryRaw" | "$transaction">,
   actorUser: { id: string; name: string },
   taskId: string,
 ) {
@@ -401,7 +413,7 @@ export async function activateManagedTask(
 }
 
 export async function deactivateManagedTask(
-  prisma: Pick<PrismaClient, "cleaningTask" | "activityLog" | "$queryRaw">,
+  prisma: Pick<PrismaClient, "cleaningTask" | "locationTask" | "activityLog" | "$queryRaw" | "$transaction">,
   actorUser: { id: string; name: string },
   taskId: string,
 ) {

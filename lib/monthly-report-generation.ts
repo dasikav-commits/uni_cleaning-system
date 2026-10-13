@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, TaskFrequency } from "@/app/generated/prisma/client";
-import { dateStringToUtcDate, getBusinessDateString, getBusinessTimeZone } from "@/lib/business-date";
+import { dateStringToUtcDate, getBusinessDateString } from "@/lib/business-date";
+import { isTaskScheduledOn } from "@/lib/task-schedule";
 
 export type ReportingPeriod = { month: number; year: number };
 export type MonthlyGenerationOptions = ReportingPeriod & { actorUserId?: string; now?: Date };
@@ -54,18 +55,7 @@ export function getReportingPeriodDates(period: ReportingPeriod): PeriodDates {
 }
 
 function isExpectedTaskDate(task: { frequency: TaskFrequency; createdAt: Date }, date: string) {
-  const taskStart = getBusinessDateString(task.createdAt);
-  if (date < taskStart) return false;
-  const target = dateStringToUtcDate(date);
-  const created = task.createdAt;
-  if (!target) return false;
-  if (task.frequency === "DAILY") return true;
-  if (task.frequency === "WEEKLY") {
-    const formatter = new Intl.DateTimeFormat("en-US", { timeZone: getBusinessTimeZone(), weekday: "short" });
-    return formatter.format(target) === formatter.format(created);
-  }
-  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: getBusinessTimeZone(), day: "2-digit" });
-  return formatter.format(target) === formatter.format(created);
+  return isTaskScheduledOn(task, date);
 }
 
 function iso(value: Date | null) { return value?.toISOString() ?? null; }
@@ -76,7 +66,7 @@ function percentage(passed: number, failed: number) {
   return ((passed * 100) / applicable).toFixed(2);
 }
 
-export function buildTaskSummary(task: Prisma.LocationTaskGetPayload<{ select: typeof locationTaskSelect }>, dates: string[], evaluations: Array<{ evaluationDate: Date; result: string; remark: string | null; evaluatingOfficer: { id: string; name: string }; createdAt: Date; finalizedAt: Date | null; lockedAt: Date | null }>) {
+export function buildTaskSummary(task: Prisma.LocationTaskGetPayload<{ select: typeof locationTaskSelect }>, dates: string[], evaluations: Array<{ id: string; evaluationDate: Date; result: string; remark: string | null; evaluatingOfficer: { id: string; name: string }; createdAt: Date; finalizedAt: Date | null; lockedAt: Date | null }>) {
   const expectedDates = dates.filter((date) => isExpectedTaskDate(task, date));
   const byDate = new Map<string, (typeof evaluations)[number]>();
   for (const evaluation of evaluations) byDate.set(getBusinessDateString(evaluation.evaluationDate), evaluation);
@@ -85,7 +75,7 @@ export function buildTaskSummary(task: Prisma.LocationTaskGetPayload<{ select: t
   const failed = expectedEvaluations.filter((item) => item.result === "X").length;
   const notApplicable = expectedEvaluations.filter((item) => item.result === "NA").length;
   const missing = expectedDates.filter((date) => !byDate.has(date)).length;
-  const history = evaluations.map((item) => ({ id: item.evaluatingOfficer.id, date: getBusinessDateString(item.evaluationDate), result: item.result, remark: item.remark, evaluatingOfficerId: item.evaluatingOfficer.id, evaluatingOfficerName: item.evaluatingOfficer.name, createdAt: item.createdAt.toISOString(), finalizedAt: iso(item.finalizedAt), lockedAt: iso(item.lockedAt) }));
+  const history = evaluations.map((item) => ({ id: item.id, date: getBusinessDateString(item.evaluationDate), result: item.result, remark: item.remark, evaluatingOfficerId: item.evaluatingOfficer.id, evaluatingOfficerName: item.evaluatingOfficer.name, createdAt: item.createdAt.toISOString(), finalizedAt: iso(item.finalizedAt), lockedAt: iso(item.lockedAt) }));
   const remarks = history.filter((item) => item.remark).map((item) => ({ date: item.date, remark: item.remark }));
   return { expectedOccurrences: expectedDates.length, passedOccurrences: passed, failedOccurrences: failed, notApplicableOccurrences: notApplicable, missingOccurrences: missing, completionPercentage: percentage(passed, failed), evaluationHistory: history as unknown as Prisma.InputJsonValue, taskRemarks: remarks as unknown as Prisma.InputJsonValue };
 }
@@ -96,8 +86,12 @@ async function resolveActorUserId(prisma: Pick<PrismaClient, "user">, actorUserI
   throw new MonthlyReportGenerationError("SYSTEM_ACTOR_REQUIRED", "Monthly processing requires a configured system actor.", 500);
 }
 
-async function processLocation(prisma: PrismaClient, period: ReportingPeriod, dates: PeriodDates, location: { id: string; code: string; name: string }, actorUserId: string) {
-  const tasks = await prisma.locationTask.findMany({ where: { locationId: location.id, active: true }, select: locationTaskSelect, orderBy: [{ createdAt: "asc" }] });
+/**
+ * Collects everything a monthly report for one location is built from: task
+ * summaries, PHI attendance history and the list of missing records.
+ */
+export async function collectLocationReportData(prisma: Pick<PrismaClient, "locationTask" | "dailyCleaningEvaluation" | "dailyAttendanceEvaluation">, dates: PeriodDates, location: { id: string }) {
+  const tasks = await prisma.locationTask.findMany({ where: { locationId: location.id, active: true, task: { active: true } }, select: locationTaskSelect, orderBy: [{ createdAt: "asc" }] });
   const taskIds = tasks.map((task) => task.id);
   const [evaluations, attendance] = await Promise.all([
     taskIds.length === 0 ? [] : prisma.dailyCleaningEvaluation.findMany({ where: { locationId: location.id, locationTaskId: { in: taskIds }, evaluationDate: { gte: dates.start, lt: dates.endExclusive } }, orderBy: [{ evaluationDate: "asc" }, { createdAt: "asc" }], select: { id: true, locationTaskId: true, evaluationDate: true, result: true, remark: true, createdAt: true, finalizedAt: true, lockedAt: true, evaluatingOfficer: { select: { id: true, name: true } } } }),
@@ -112,6 +106,16 @@ async function processLocation(prisma: PrismaClient, period: ReportingPeriod, da
   const errors = [...missingEvaluations, ...(missingAttendance.length ? [`${missingAttendance.length} missing PHI total-present record(s)`] : [])];
   const complete = errors.length === 0;
   const processingError = complete ? null : errors.join("; ");
+  return { summaries, attendanceHistory, errors, complete, processingError };
+}
+
+/** Rows for monthlyTaskSummary.createMany for the given report. */
+export function buildTaskSummaryRows(reportId: string, summaries: Awaited<ReturnType<typeof collectLocationReportData>>["summaries"]) {
+  return summaries.map(({ task, summary }) => ({ reportId, locationTaskId: task.id, taskNameSnapshot: task.task.name, categorySnapshot: task.task.category, frequencySnapshot: task.frequency, allocatedAmount: task.allocatedAmount, recommendedAmount: null, completionPercentage: summary.completionPercentage, expectedOccurrences: summary.expectedOccurrences, passedOccurrences: summary.passedOccurrences, failedOccurrences: summary.failedOccurrences, notApplicableOccurrences: summary.notApplicableOccurrences, missingOccurrences: summary.missingOccurrences, evaluationHistory: summary.evaluationHistory, taskRemarks: summary.taskRemarks }));
+}
+
+async function processLocation(prisma: PrismaClient, period: ReportingPeriod, dates: PeriodDates, location: { id: string; code: string; name: string }, actorUserId: string) {
+  const { summaries, attendanceHistory, errors, complete, processingError } = await collectLocationReportData(prisma, dates, location);
   let notificationsCreated = 0;
   let reportCreated = false;
   let reportId = "";
@@ -126,7 +130,7 @@ async function processLocation(prisma: PrismaClient, period: ReportingPeriod, da
       // A previously incomplete draft becomes a newly submitted report on completion.
       reportCreated = !existing || (existing.status === "DRAFT" && complete);
       await tx.monthlyTaskSummary.deleteMany({ where: { reportId: report.id } });
-      if (summaries.length) await tx.monthlyTaskSummary.createMany({ data: summaries.map(({ task, summary }) => ({ reportId: report.id, locationTaskId: task.id, taskNameSnapshot: task.task.name, categorySnapshot: task.task.category, frequencySnapshot: task.frequency, allocatedAmount: task.allocatedAmount, recommendedAmount: null, completionPercentage: summary.completionPercentage, expectedOccurrences: summary.expectedOccurrences, passedOccurrences: summary.passedOccurrences, failedOccurrences: summary.failedOccurrences, notApplicableOccurrences: summary.notApplicableOccurrences, missingOccurrences: summary.missingOccurrences, evaluationHistory: summary.evaluationHistory, taskRemarks: summary.taskRemarks })) });
+      if (summaries.length) await tx.monthlyTaskSummary.createMany({ data: buildTaskSummaryRows(report.id, summaries) });
       await tx.activityLog.create({ data: { userId: actorUserId, action: "MONTHLY_REPORT_GENERATED", entityType: "MonthlyEvaluationReport", entityId: report.id, description: complete ? "Monthly evaluation report generated." : "Incomplete monthly evaluation report recorded.", metadata: { month: period.month, year: period.year, locationId: location.id, status: complete ? "SUBMITTED" : "DRAFT", isComplete: complete } as Prisma.InputJsonValue } });
       if (!complete) return;
       await tx.activityLog.create({ data: { userId: actorUserId, action: "REPORT_SUBMITTED", entityType: "MonthlyEvaluationReport", entityId: report.id, description: "Monthly evaluation report submitted automatically.", metadata: { month: period.month, year: period.year, locationId: location.id, status: "SUBMITTED" } as Prisma.InputJsonValue } });
@@ -165,7 +169,8 @@ export async function generateMonthlyReportsForPeriod(
       else result.reportsIncomplete += 1;
       if (processed.errors.length) result.errors.push({ locationId: location.id, location: location.name, message: processed.errors.join("; ") });
     } catch (error) {
-      result.errors.push({ locationId: location.id, location: location.name, message: error instanceof Error ? "Unable to process this location." : "Unable to process this location." });
+      result.errors.push({ locationId: location.id, location: location.name, message: "Unable to process this location." });
+      console.error(`Monthly report generation failed for location ${location.id}`, error);
     }
   }
   return result;

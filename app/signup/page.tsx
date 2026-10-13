@@ -27,6 +27,8 @@ export default function SignupPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [pendingApproval, setPendingApproval] = useState(true);
 
   const passwordError = useMemo(() => {
     if (!password) return null;
@@ -54,17 +56,25 @@ export default function SignupPage() {
     }
 
     setIsSubmitting(true);
-    const response = await fetch("/api/auth/signup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: trimmedName,
-        email: trimmedEmail,
-        password,
-        role,
-      }),
-    });
-    const result = (await response.json().catch(() => ({}))) as { error?: string };
+    let response: Response;
+    let result: { error?: string; message?: string; pendingApproval?: boolean };
+    try {
+      response = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          email: trimmedEmail,
+          password,
+          role,
+        }),
+      });
+      result = (await response.json().catch(() => ({}))) as typeof result;
+    } catch {
+      setIsSubmitting(false);
+      setError("Network error. Please check your connection and try again.");
+      return;
+    }
     setIsSubmitting(false);
 
     if (!response.ok) {
@@ -73,7 +83,18 @@ export default function SignupPage() {
     }
 
     setSuccess(true);
-    window.setTimeout(() => router.replace("/login"), 1200);
+    const needsApproval = result.pendingApproval !== false;
+    setPendingApproval(needsApproval);
+    setSuccessMessage(
+      result.message ??
+        (needsApproval
+          ? "Account created. A GAA administrator must approve it before you can sign in."
+          : "Account created. Redirecting you to sign in..."),
+    );
+    // Accounts awaiting approval cannot sign in yet, so keep the message visible.
+    if (!needsApproval) {
+      window.setTimeout(() => router.replace("/login"), 1500);
+    }
   };
 
   return (
@@ -88,11 +109,11 @@ export default function SignupPage() {
               Create your role-based university account.
             </h1>
             <p className="mt-4 max-w-md text-sm leading-7 text-slate-300">
-              Choose the role that matches your responsibilities. Your dashboard and permissions will follow that selection.
+              Choose the role that matches your responsibilities. A GAA administrator reviews every new account and activates it with the appropriate role.
             </p>
           </div>
           <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-5 text-sm leading-6 text-cyan-50">
-            All five operational roles are available during registration.
+            New accounts stay inactive until a GAA administrator approves them. You will be able to sign in once your account is activated.
           </div>
         </section>
 
@@ -136,7 +157,7 @@ export default function SignupPage() {
             </label>
 
             {error ? <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
-            {success ? <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">Account created. Redirecting you to sign in...</p> : null}
+            {success ? <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{successMessage}{pendingApproval ? <> <Link href="/login" className="font-semibold underline">Back to sign in</Link></> : null}</p> : null}
             <button type="submit" disabled={isSubmitting || success} className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70">
               {isSubmitting ? "Creating account..." : "Create account"}
             </button>

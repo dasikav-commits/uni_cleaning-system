@@ -31,20 +31,30 @@ export default function ForgotPasswordPage() {
     }
 
     setIsSubmitting(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
 
-    const supabase = getSupabaseBrowserClient();
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
+      if (resetError) {
+        setError(
+          resetError.status === 429 || resetError.code === "over_email_send_rate_limit"
+            ? "Too many reset requests. Please wait a few minutes before trying again."
+            : "We couldn't send the reset link right now. Please try again.",
+        );
+        return;
+      }
 
-    setIsSubmitting(false);
-
-    if (resetError) {
-      setError("We couldn't send the reset link right now.");
-      return;
+      // Same message whether or not the address exists, so accounts can't be enumerated.
+      setMessage(
+        "If that email address is registered, a reset link has been sent. Open it in this browser to choose a new password.",
+      );
+    } catch {
+      setError("Network error. Please check your connection and try again.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setMessage("If that email address is registered, a reset link has been sent.");
   };
 
   return (

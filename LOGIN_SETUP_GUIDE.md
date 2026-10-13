@@ -1,125 +1,64 @@
-# Login System - Setup Guide
+# Login & Account Setup Guide
 
-## ✅ What Has Been Fixed
+Configure the environment variables listed in [`.env.example`](./.env.example) first.
 
-The login system has been updated to work without pre-seeded users. Here's what changed:
+## How accounts work
 
-### 1. **Auto-Creating Users**
-   - When a user logs in, if they don't exist in the database, they're automatically created
-   - New users default to **GAA** role (admin)
+- Every account has exactly one role: **GAA**, **Administration Officer**, **Evaluating Officer**, **PHI** or **Vice Chancellor**.
+- **Self-registration** (`/signup`) only *requests* a role. The new account is created **inactive** and cannot use the
+  system until a GAA activates it (and, if needed, changes its role) in **User Management**.
+- **Bootstrap:** if no active GAA exists yet, the first person who signs up requesting the GAA role is activated
+  immediately, so a fresh installation can be set up. Every later GAA request needs approval.
+- People who sign in with a Supabase account that has no profile in the database get an inactive
+  Evaluating Officer profile, again pending GAA approval. Nobody is made a GAA automatically.
+- Deactivated users are signed out and denied access to every page and API.
+- Users with recorded history (evaluations, reports, reviews…) cannot be deleted. Deactivate them instead, so the
+  audit trail stays intact.
 
-### 2. **New Initialization Page**
-   - Easy web interface to create test users
-   - No need to run CLI commands
-   - Location: `http://localhost:3000/init-test-users`
+## Recommended first-time setup
 
-### 3. **New Signup API**
-   - Endpoint: `POST /api/auth/signup`
-   - Allows users to self-register accounts
+1. Sign up at `/signup` requesting the **GAA** role. As the first GAA you are activated straight away.
+2. Create the other accounts in **User Management**, or approve the people who signed up themselves.
+3. Create locations and tasks, then assign Evaluating Officers and PHIs to locations.
 
----
+## Password reset
 
-## 🚀 How to Login
+- **Forgot password** (`/forgot-password`) emails a reset link that opens `/reset-password`.
+- In Supabase → **Authentication → URL Configuration**, add `https://YOUR-DOMAIN/reset-password` (and
+  `http://localhost:3000/reset-password` for development) to the **Redirect URLs**, otherwise the link is rejected.
+- The link must be opened in the same browser the reset was requested from (Supabase PKCE flow). Expired or reused
+  links show a message with a button to request a new one. After a successful reset, all sessions are signed out.
 
-### Option 1: Using the Initialization Page (Recommended)
+## Cleaning workers
 
-1. **Get Your Service Role Key:**
-   - Go to https://app.supabase.com/
-   - Login and select your project
-   - Navigate to **Settings** → **API**
-   - Copy the **Service Role** key (the secret one, NOT the anon key)
+GAA users manage workers under **Assignments → Cleaning Workers** (`/gaa/workers`): add workers, assign them to
+locations with a monthly allocated amount, change allocations, and remove or deactivate workers. Active assignments
+of active workers are the "total workers" PHIs see for a location. Every change is recorded in the audit log.
 
-2. **Initialize Test Users:**
-   - Open http://localhost:3000/init-test-users
-   - Paste your Service Role Key
-   - Click **Initialize Test Users**
-   - Copy the credentials displayed
+## Test accounts (development only)
 
-3. **Login:**
-   - Go to http://localhost:3000/login
-   - Use any of the test credentials provided
+`/init-test-users` (or `npm run seed`) creates one account per role using the passwords defined in
+`prisma/test-users.ts`. The passwords are public, so:
 
----
+- The page needs your Supabase **service role key** and does not display the passwords.
+- In production it is disabled unless `ALLOW_TEST_USER_INIT=true`. Enable it only briefly, then delete or
+  deactivate the test accounts before real use.
 
-### Option 2: Quick Sign Up
+## Monthly reports
 
-1. Go to http://localhost:3000/login
-2. Enter email and password to create a new account
-3. The system will auto-create your profile
-4. You'll be redirected to your dashboard
+- Reports for the previous month are generated automatically on the 1st (see `vercel.json`, 01:00 UTC). This needs
+  `CRON_SECRET` and `MONTHLY_REPORT_SYSTEM_ACTOR_ID`.
+- A GAA can also run (or re-run) processing for any month from **Monthly Reports → Monthly processing**.
+- If daily records are missing, the report stays **incomplete (draft)**. Assigned officers can then open that month
+  from the report and fill in the missing days, and a GAA re-runs processing to submit it.
+- If Administration requests a **correction**, assigned Evaluating Officers and PHIs can edit that month's daily
+  records (including finalized ones; every change is logged with the previous value). An assigned Evaluating Officer
+  or a GAA then clicks **Resubmit corrected report** on the report page.
 
----
+## Troubleshooting
 
-## 📋 Default Test Credentials
-
-After initialization, you'll have these accounts:
-
-| Role | Email | Password |
-|------|-------|----------|
-| **Admin (GAA)** | admin@university.edu | Admin@12345 |
-| **Evaluating Officer** | officer@university.edu | Officer@12345 |
-| **PHI Inspector** | phi@university.edu | Phi@12345 |
-| **Admin Officer** | admin.officer@university.edu | AdminOff@12345 |
-| **Vice Chancellor** | vc@university.edu | VC@12345 |
-
----
-
-## 🔧 Environment Variable Update
-
-If you want to use the seed script, add this to your `.env`:
-
-```env
-SUPABASE_SERVICE_ROLE_KEY="your-service-role-key-here"
-```
-
-Then run:
-```bash
-npm run seed
-```
-
----
-
-## ✨ Features
-
-- ✅ **Auto User Creation** - Users are created in the database on first login
-- ✅ **Role-Based Redirects** - Each role is redirected to their dashboard
-- ✅ **Web-Based Initialization** - No CLI needed
-- ✅ **Self-Registration** - Users can sign up their own accounts
-- ✅ **Security** - Passwords are hashed by Supabase
-
----
-
-## 🔗 Quick Links
-
-- **Login Page**: http://localhost:3000/login
-- **Initialize Test Users**: http://localhost:3000/init-test-users
-- **Dashboard**: http://localhost:3000/dashboard
-
----
-
-## 🆘 Troubleshooting
-
-### "Invalid email or password"
-- Make sure you've run the initialization
-- Check email/password spelling
-- Verify Supabase Service Role Key is correct
-
-### "Your account is not fully set up yet"
-- This should not appear now (auto-creation is enabled)
-- If it does, your database connection might be down
-
-### "Server configuration error"
-- Check your `.env` file has `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- Restart the dev server after updating `.env`
-
----
-
-## 📝 Next Steps
-
-1. **Visit**: http://localhost:3000/init-test-users
-2. **Provide**: Your Supabase Service Role Key
-3. **Initialize**: Click the button
-4. **Login**: Use the credentials at http://localhost:3000/login
-5. **Explore**: Access role-specific dashboards
-
-Enjoy! 🎉
+| Message | Meaning |
+|---|---|
+| "Invalid email or password" | Wrong credentials, or the Supabase account does not exist. |
+| "Your account is not active…" | A GAA has to activate the account in User Management. |
+| "Server configuration error" | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are missing. Restart the dev server after editing `.env`. |

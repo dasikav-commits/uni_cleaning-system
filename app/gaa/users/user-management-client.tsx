@@ -224,7 +224,7 @@ export function GaaUserManagementClient({ initialData, currentFilters }: Props) 
   };
 
   const deleteUser = async (user: UserListItem) => {
-    if (!window.confirm(`Permanently delete ${user.name} from PostgreSQL and Supabase Auth? This cannot be undone.`)) return;
+    if (!window.confirm(`Permanently delete ${user.name} from PostgreSQL and Supabase Auth? This cannot be undone.\n\nOnly accounts with no assignments, records or audit history can be deleted; deactivate other accounts instead.`)) return;
     setTableBusyId(user.id);
     setFeedback(null);
     try {
@@ -636,8 +636,13 @@ export function GaaUserManagementClient({ initialData, currentFilters }: Props) 
                 type="button"
                 disabled={isPending}
                 onClick={() => {
-                  startTransition(() => {
-                    void submitUser();
+                  startTransition(async () => {
+                    // Awaiting keeps isPending true until the request completes (prevents double submits).
+                    try {
+                      await submitUser();
+                    } catch {
+                      setFeedback({ kind: "error", text: "Unable to reach the server. Check your connection and try again." });
+                    }
                   });
                 }}
                 className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"

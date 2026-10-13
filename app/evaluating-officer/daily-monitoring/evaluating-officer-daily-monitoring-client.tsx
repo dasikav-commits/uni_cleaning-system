@@ -48,6 +48,19 @@ export function EvaluatingOfficerDailyMonitoringClient({
 
   const refresh = () => router.refresh();
 
+  const editMode = initialData.editMode ?? "TODAY";
+  const correctionMode = editMode === "CORRECTION";
+  // Finalized entries are read-only except while a correction is requested.
+  const isLocked = (task: { eligible: boolean; finalized: boolean }) =>
+    !task.eligible || (task.finalized && !correctionMode);
+  const monthRange = useMemo(() => {
+    const [year, month] = initialData.selectedDate.split("-").map(Number);
+    const first = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const last = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    return { first, last };
+  }, [initialData.selectedDate]);
+
   const submit = async (finalize: boolean) => {
     setFeedback(null);
     const response = await fetch("/api/evaluating-officer/daily-monitoring", {
@@ -101,7 +114,9 @@ export function EvaluatingOfficerDailyMonitoringClient({
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Date</p>
           <p className="mt-2 text-xl font-semibold text-slate-900">{initialData.selectedDate}</p>
-          <p className="mt-1 text-xs text-slate-500">Today only</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {editMode === "CORRECTION" ? "Correction requested" : editMode === "BACKFILL" ? "Filling in missing days" : "Today only"}
+          </p>
         </div>
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Eligible Tasks</p>
@@ -110,6 +125,29 @@ export function EvaluatingOfficerDailyMonitoringClient({
           </p>
         </div>
       </section>
+
+      {editMode !== "TODAY" ? (
+        <div
+          className={`rounded-2xl border px-4 py-3 text-sm ${
+            correctionMode ? "border-amber-200 bg-amber-50 text-amber-900" : "border-sky-200 bg-sky-50 text-sky-900"
+          }`}
+        >
+          {correctionMode
+            ? "Administration requested a correction for this month's report. You can change any evaluation of this month, including finalized ones. When the corrections are done, resubmit the report from the monthly report page."
+            : "This month's report is incomplete. Fill in the missing evaluations; a GAA will then re-run monthly processing to submit the report."}{" "}
+          {initialData.editReportId ? (
+            <Link href={`/monthly-reports/${initialData.editReportId}`} className="font-semibold underline">
+              Open the monthly report
+            </Link>
+          ) : null}{" "}
+          <Link
+            href={`/daily-monitoring${initialData.selectedLocationId ? `?locationId=${initialData.selectedLocationId}` : ""}`}
+            className="font-semibold underline"
+          >
+            Back to today
+          </Link>
+        </div>
+      ) : null}
 
       {feedback ? (
         <div
@@ -150,11 +188,27 @@ export function EvaluatingOfficerDailyMonitoringClient({
               </option>
             ))}
           </select>
-          <div className="rounded-2xl border border-slate-300 px-4 py-2 text-sm text-slate-700">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Date locked</p>
-            <p className="mt-1 font-medium">{currentFilters.date}</p>
-          </div>
-          <input type="hidden" name="date" value={currentFilters.date} />
+          {editMode === "TODAY" ? (
+            <>
+              <div className="rounded-2xl border border-slate-300 px-4 py-2 text-sm text-slate-700">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Date locked</p>
+                <p className="mt-1 font-medium">{currentFilters.date}</p>
+              </div>
+              <input type="hidden" name="date" value={currentFilters.date} />
+            </>
+          ) : (
+            <label className="rounded-2xl border border-slate-300 px-4 py-2 text-sm text-slate-700">
+              <span className="block text-xs uppercase tracking-wide text-slate-400">Date in this month</span>
+              <input
+                type="date"
+                name="date"
+                defaultValue={currentFilters.date}
+                min={monthRange.first}
+                max={monthRange.last}
+                className="mt-1 w-full font-medium outline-none"
+              />
+            </label>
+          )}
           <button
             type="submit"
             className="inline-flex items-center justify-center rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
@@ -181,7 +235,7 @@ export function EvaluatingOfficerDailyMonitoringClient({
                     <p className="text-sm font-semibold text-slate-900">{task.taskName}</p>
                     <p className="mt-1 text-sm text-slate-600">Frequency: {task.frequency}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {task.eligible ? "Eligible today" : task.eligibilityNote ?? "Not eligible"}
+                      {task.eligible ? (editMode === "TODAY" ? "Eligible today" : "Eligible on this date") : task.eligibilityNote ?? "Not eligible"}
                     </p>
                   </div>
                   <span
@@ -197,7 +251,7 @@ export function EvaluatingOfficerDailyMonitoringClient({
 
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
                   <fieldset
-                    disabled={!task.eligible || task.finalized}
+                    disabled={isLocked(task)}
                     className="grid gap-2"
                   >
                     <legend className="text-sm font-medium text-slate-700">Result</legend>
@@ -231,7 +285,7 @@ export function EvaluatingOfficerDailyMonitoringClient({
                     <span className="text-sm font-medium text-slate-700">Remark</span>
                     <textarea
                       value={drafts[task.locationTaskId]?.remark ?? ""}
-                      disabled={!task.eligible || task.finalized}
+                      disabled={isLocked(task)}
                       onChange={(event) =>
                         setDrafts((current) => ({
                           ...current,
@@ -263,8 +317,13 @@ export function EvaluatingOfficerDailyMonitoringClient({
               type="button"
               disabled={isPending || !initialData.selectedLocationId}
               onClick={() => {
-                startTransition(() => {
-                  void submit(false);
+                startTransition(async () => {
+                  // Awaiting keeps isPending true until the request completes (prevents double submits).
+                  try {
+                    await submit(false);
+                  } catch {
+                    setFeedback({ kind: "error", text: "Unable to reach the server. Check your connection and try again." });
+                  }
                 });
               }}
               className="rounded-full border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -275,8 +334,13 @@ export function EvaluatingOfficerDailyMonitoringClient({
               type="button"
               disabled={isPending || !initialData.selectedLocationId}
               onClick={() => {
-                startTransition(() => {
-                  void submit(true);
+                startTransition(async () => {
+                  // Awaiting keeps isPending true until the request completes (prevents double submits).
+                  try {
+                    await submit(true);
+                  } catch {
+                    setFeedback({ kind: "error", text: "Unable to reach the server. Check your connection and try again." });
+                  }
                 });
               }}
               className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"

@@ -18,6 +18,9 @@ type PrismaMock = {
     create: Mock;
     update: Mock;
   };
+  monthlyEvaluationReport: {
+    findFirst: Mock;
+  };
   activityLog: {
     create: Mock;
   };
@@ -51,6 +54,10 @@ function createPrismaMock(): PrismaMock {
       findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+    },
+    monthlyEvaluationReport: {
+      // Attendance dates in these tests are in a past month without a report yet.
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     activityLog: {
       create: vi.fn(),
@@ -259,5 +266,48 @@ describe("savePHIAttendanceEvaluation", () => {
         },
       ),
     ).rejects.toMatchObject({ code: "ATTENDANCE_FINALIZED" });
+  });
+
+  it("freezes attendance once the month's report has been submitted", async () => {
+    prismaMock.pHIAssignment.findFirst.mockResolvedValue({ id: "assignment-1" });
+    prismaMock.location.findUnique.mockResolvedValue({ id: locationId, code: "LIB", name: "Library", active: true });
+    prismaMock.monthlyEvaluationReport.findFirst.mockResolvedValue({ id: "report-1", status: "SUBMITTED" });
+
+    await expect(
+      savePHIAttendanceEvaluation(
+        prismaMock as unknown as Parameters<typeof savePHIAttendanceEvaluation>[0],
+        phi,
+        { locationId, attendanceDate, totalPresentCount: 7 },
+      ),
+    ).rejects.toMatchObject({ code: "REPORT_SUBMITTED", status: 409 });
+    expect(prismaMock.dailyAttendanceEvaluation.update).not.toHaveBeenCalled();
+  });
+
+  it("allows correcting finalized attendance while the report has a correction request", async () => {
+    const lockedAt = new Date("2026-08-10T03:00:00Z");
+    prismaMock.pHIAssignment.findFirst.mockResolvedValue({ id: "assignment-1" });
+    prismaMock.location.findUnique.mockResolvedValue({ id: locationId, code: "LIB", name: "Library", active: true });
+    prismaMock.monthlyEvaluationReport.findFirst.mockResolvedValue({ id: "report-1", status: "CORRECTION_REQUESTED" });
+    prismaMock.dailyAttendanceEvaluation.findFirst.mockResolvedValue({ ...createAttendanceRecord(), lockedAt, finalizedAt: lockedAt });
+    prismaMock.dailyAttendanceEvaluation.update.mockResolvedValue({
+      ...createAttendanceRecord({ totalPresentCount: 7 }),
+      lockedAt,
+      finalizedAt: lockedAt,
+    });
+
+    const result = await savePHIAttendanceEvaluation(
+      prismaMock as unknown as Parameters<typeof savePHIAttendanceEvaluation>[0],
+      phi,
+      { locationId, attendanceDate, totalPresentCount: 7 },
+    );
+
+    expect(prismaMock.dailyAttendanceEvaluation.update).toHaveBeenCalled();
+    expect(prismaMock.activityLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "ATTENDANCE_EVALUATION_UPDATED",
+        metadata: expect.objectContaining({ previousTotalPresentCount: 8, correctionReportId: "report-1" }),
+      }),
+    });
+    expect(result.totalPresentCount).toBe(7);
   });
 });

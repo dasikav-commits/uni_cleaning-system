@@ -248,6 +248,43 @@ describe("updateManagedUser", () => {
   });
 });
 
+describe("self-lockout protection", () => {
+  const self = {
+    id: "actor-1",
+    name: "Admin",
+    email: "admin@example.com",
+    role: "GAA",
+    active: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  it("prevents a GAA from deactivating their own account", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(self);
+    prismaMock.user.update.mockClear();
+    await expect(
+      deactivateManagedUser(prismaMock as unknown as Parameters<typeof deactivateManagedUser>[0], { id: "actor-1", name: "Admin" }, "actor-1"),
+    ).rejects.toMatchObject({ code: "CANNOT_DEACTIVATE_SELF", status: 400 });
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("prevents a GAA from changing their own role but still allows renaming", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(self);
+    await expect(
+      updateManagedUser(prismaMock as unknown as Parameters<typeof updateManagedUser>[0], { id: "actor-1", name: "Admin" }, "actor-1", { role: "PHI" }),
+    ).rejects.toMatchObject({ code: "CANNOT_CHANGE_OWN_ROLE" });
+
+    prismaMock.user.update.mockResolvedValue({ ...self, name: "Renamed" });
+    const result = await updateManagedUser(
+      prismaMock as unknown as Parameters<typeof updateManagedUser>[0],
+      { id: "actor-1", name: "Admin" },
+      "actor-1",
+      { name: "Renamed", role: "GAA", active: true },
+    );
+    expect(result.user.name).toBe("Renamed");
+  });
+});
+
 describe("deactivateManagedUser", () => {
   it("persists active=false in PostgreSQL and records the deactivation", async () => {
     prismaMock.user.findUnique.mockResolvedValue({
@@ -287,7 +324,7 @@ describe("deactivateManagedUser", () => {
 });
 
 describe("deleteManagedUser", () => {
-  it("deletes an inactive user and cleans up owned audit records", async () => {
+  it("deletes a user without history and only cleans up their notifications", async () => {
     prismaMock.user.findUnique.mockResolvedValue({
       id: "user-1",
       email: "person@example.com",
@@ -315,9 +352,28 @@ describe("deleteManagedUser", () => {
       "user-1",
     );
 
-    expect(prismaMock.activityLog.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-1" } });
+    expect(prismaMock.activityLog.deleteMany).not.toHaveBeenCalled();
     expect(prismaMock.notification.deleteMany).toHaveBeenCalledWith({ where: { recipientUserId: "user-1" } });
     expect(prismaMock.user.delete).toHaveBeenCalledWith({ where: { id: "user-1" } });
     expect(result.user.id).toBe("user-1");
+  });
+
+  it("refuses to delete a user with audit history so the trail is preserved", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({
+      id: "user-2",
+      email: "worker@example.com",
+      _count: { evaluations: 0, activityLogs: 3 },
+    });
+
+    await expect(
+      deleteManagedUser(
+        prismaMock as unknown as Parameters<typeof deleteManagedUser>[0],
+        { id: "actor-1", name: "Admin" },
+        "user-2",
+      ),
+    ).rejects.toMatchObject({ code: "USER_HAS_HISTORY", status: 409 });
+
+    expect(prismaMock.activityLog.deleteMany).not.toHaveBeenCalled();
+    expect(prismaMock.user.delete).not.toHaveBeenCalled();
   });
 });

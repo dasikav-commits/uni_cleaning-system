@@ -35,7 +35,11 @@ const navByRole: Record<UserRole, NavSection[]> = {
     },
     {
       title: "Assignments",
-      items: [{ href: "/gaa/evaluating-officer-assignments", label: "Evaluating Officer Assignments" }],
+      items: [
+        { href: "/gaa/evaluating-officer-assignments", label: "Evaluating Officer Assignments" },
+        { href: "/gaa/phi-assignments", label: "PHI Assignments" },
+        { href: "/gaa/workers", label: "Cleaning Workers" },
+      ],
     },
     {
       title: "Reports",
@@ -91,6 +95,7 @@ const navByRole: Record<UserRole, NavSection[]> = {
       items: [
         { href: "/dashboard/administration", label: "Dashboard" },
         { href: "/administration/reports", label: "Administration Review" },
+        { href: "/administration/phi-monthly-attendance", label: "PHI Monthly Attendance" },
         { href: "/monthly-reports", label: "Monthly Reports" },
       ],
     },
@@ -99,6 +104,10 @@ const navByRole: Record<UserRole, NavSection[]> = {
     {
       title: "Overview",
       items: [{ href: "/dashboard/vice-chancellor", label: "Dashboard" }],
+    },
+    {
+      title: "Approvals",
+      items: [{ href: "/vice-chancellor/payment-recommendations", label: "Payment Recommendations" }],
     },
   ],
 };

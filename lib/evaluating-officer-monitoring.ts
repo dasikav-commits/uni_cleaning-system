@@ -16,6 +16,8 @@ import {
   normalizeDateString,
 } from "@/lib/business-date";
 import { canEvaluatingOfficerAccessLocation } from "@/lib/evaluating-officer-assignments";
+import { getPastEditWindow, type PastEditMode } from "@/lib/monthly-report-corrections";
+import { isTaskScheduledOn } from "@/lib/task-schedule";
 
 export const allowedEvaluationResults = ["P", "X", "NA"] as const;
 export type EvaluationResultValue = (typeof allowedEvaluationResults)[number];
@@ -45,12 +47,20 @@ export type OfficerMonitoringTask = {
   lockedAt: Date | null;
 };
 
+export type OfficerEditMode = "TODAY" | PastEditMode;
+
 export type OfficerMonitoringData = {
   selectedDate: string;
   selectedLocationId: string;
   locations: OfficerLocationSummary[];
   location: Pick<Location, "id" | "code" | "name" | "active"> | null;
   tasks: OfficerMonitoringTask[];
+  /**
+   * TODAY for normal daily work; CORRECTION / BACKFILL when a past date is
+   * opened because that month's report needs corrections or is incomplete.
+   */
+  editMode?: OfficerEditMode;
+  editReportId?: string | null;
 };
 
 export type OfficerEvaluationHistoryItem = {
@@ -180,64 +190,46 @@ function getBusinessDate(date = new Date()) {
   return getBusinessDateString(date, getBusinessTimeZone());
 }
 
-function assertTodayOnly(selectedDate: string) {
-  const today = getBusinessDate();
-  if (selectedDate > today) {
+function assertNotFuture(selectedDate: string) {
+  if (selectedDate > getBusinessDate()) {
     throw new OfficerMonitoringError(
       "FUTURE_DATE",
       "Future evaluations are not allowed.",
       400,
     );
   }
+}
 
-  if (selectedDate < today) {
+/**
+ * Evaluations are normally recorded for today only. A past date is open only
+ * while that month's report for the location is incomplete (BACKFILL) or has
+ * an Administration correction request (CORRECTION).
+ */
+async function resolveEditWindow(
+  prisma: Pick<PrismaClient, "monthlyEvaluationReport">,
+  locationId: string,
+  selectedDate: string,
+): Promise<{ mode: OfficerEditMode; reportId: string | null }> {
+  assertNotFuture(selectedDate);
+
+  if (selectedDate === getBusinessDate()) {
+    return { mode: "TODAY", reportId: null };
+  }
+
+  const window = locationId ? await getPastEditWindow(prisma, locationId, selectedDate) : null;
+  if (!window) {
     throw new OfficerMonitoringError(
       "PAST_DATE",
-      "Past evaluations cannot be edited.",
+      "Past evaluations cannot be edited. They can only be changed while that month's report is incomplete or has a correction request from Administration.",
       400,
     );
   }
-}
 
-function getBusinessWeekday(date: Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: getBusinessTimeZone(),
-    weekday: "short",
-  }).format(date);
-}
-
-function getBusinessDayOfMonth(date: Date) {
-  return Number(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: getBusinessTimeZone(),
-      day: "2-digit",
-    }).format(date),
-  );
+  return { mode: window.mode, reportId: window.reportId };
 }
 
 function isEligibleForDate(task: { frequency: TaskFrequency; createdAt: Date }, date: string) {
-  if (!isValidDateString(date)) {
-    return false;
-  }
-
-  const target = dateStringToUtcDate(date);
-  if (!target) {
-    return false;
-  }
-
-  if (getBusinessDate(target) < getBusinessDate(task.createdAt)) {
-    return false;
-  }
-
-  if (task.frequency === "DAILY") {
-    return true;
-  }
-
-  if (task.frequency === "WEEKLY") {
-    return getBusinessWeekday(target) === getBusinessWeekday(task.createdAt);
-  }
-
-  return getBusinessDayOfMonth(target) === getBusinessDayOfMonth(task.createdAt);
+  return isTaskScheduledOn(task, date);
 }
 
 function mapEvaluation(record: EvaluationRecord): OfficerMonitoringTask {
@@ -291,7 +283,7 @@ export async function listOfficerMonitoringLocations(
   for (const assignment of assignments) {
     const [activeTaskCount, evaluatedTaskCount] = await Promise.all([
       prisma.locationTask.count({
-        where: { locationId: assignment.location.id, active: true },
+        where: { locationId: assignment.location.id, active: true, task: { active: true } },
       }),
       prisma.dailyCleaningEvaluation.count({
         where: {
@@ -319,7 +311,7 @@ export async function listOfficerMonitoringLocations(
 export async function getOfficerMonitoringData(
   prisma: Pick<
     PrismaClient,
-    "evaluatingOfficerAssignment" | "location" | "locationTask" | "dailyCleaningEvaluation"
+    "evaluatingOfficerAssignment" | "location" | "locationTask" | "dailyCleaningEvaluation" | "monthlyEvaluationReport"
   >,
   officerId: string,
   selectedLocationId: string,
@@ -330,7 +322,7 @@ export async function getOfficerMonitoringData(
     throw new OfficerMonitoringError("INVALID_DATE", "The selected date is not valid.");
   }
 
-  assertTodayOnly(normalizedDate);
+  assertNotFuture(normalizedDate);
 
   const assignments = await loadOfficerLocationAssignments(prisma, officerId);
   if (assignments.length === 0) {
@@ -372,8 +364,11 @@ export async function getOfficerMonitoringData(
     throw new OfficerMonitoringError("LOCATION_NOT_FOUND", "Location not found.", 404);
   }
 
+  const editWindow = await resolveEditWindow(prisma, locationId, normalizedDate);
+
   const locationTasks = await prisma.locationTask.findMany({
-    where: { locationId, active: true },
+    // A deactivated cleaning task is retired everywhere, not just for one location.
+    where: { locationId, active: true, task: { active: true } },
     select: taskSelect,
     orderBy: [{ createdAt: "asc" }],
   });
@@ -434,6 +429,8 @@ export async function getOfficerMonitoringData(
     })),
     location,
     tasks,
+    editMode: editWindow.mode,
+    editReportId: editWindow.reportId,
   };
 }
 
@@ -470,7 +467,7 @@ export type SaveOfficerEvaluationsInputRecord = {
 export async function saveOfficerEvaluations(
   prisma: Pick<
     PrismaClient,
-    "evaluatingOfficerAssignment" | "locationTask" | "dailyCleaningEvaluation" | "activityLog" | "$transaction"
+    "evaluatingOfficerAssignment" | "location" | "locationTask" | "dailyCleaningEvaluation" | "monthlyEvaluationReport" | "activityLog" | "$transaction"
   >,
   actorUser: Pick<User, "id" | "name" | "role" | "active">,
   input: SaveOfficerEvaluationsInput,
@@ -489,7 +486,8 @@ export async function saveOfficerEvaluations(
     throw new OfficerMonitoringError("INVALID_DATE", "The selected date is not valid.");
   }
 
-  assertTodayOnly(selectedDate);
+  const editWindow = await resolveEditWindow(prisma, locationId, selectedDate);
+  const correctionMode = editWindow.mode === "CORRECTION";
 
   const evaluationDate = dateStringToUtcDate(selectedDate);
   if (!evaluationDate) {
@@ -505,8 +503,28 @@ export async function saveOfficerEvaluations(
     throw new OfficerMonitoringError("ACCESS_DENIED", "Access denied.", 403);
   }
 
+  // Inactive locations are excluded from monthly processing, so evaluations
+  // recorded for them would silently be lost.
+  const targetLocation = await prisma.location.findUnique({
+    where: { id: locationId },
+    select: { active: true },
+  });
+  if (!targetLocation) {
+    throw new OfficerMonitoringError("LOCATION_NOT_FOUND", "Location not found.", 404);
+  }
+  // A report under correction may still be fixed even if the location was
+  // deactivated afterwards.
+  if (!targetLocation.active && !correctionMode) {
+    throw new OfficerMonitoringError(
+      "LOCATION_INACTIVE",
+      "This location is inactive. Evaluations cannot be recorded for it.",
+      409,
+    );
+  }
+
   const locationTasks = await prisma.locationTask.findMany({
-    where: { locationId, active: true },
+    // A deactivated cleaning task is retired everywhere, not just for one location.
+    where: { locationId, active: true, task: { active: true } },
     select: taskSelect,
     orderBy: [{ createdAt: "asc" }],
   });
@@ -566,6 +584,45 @@ export async function saveOfficerEvaluations(
         const current = existingByLocationTaskId.get(locationTask.id);
         const remark = normalizeRemark(submitted.remark);
         const result = submitted.result as EvaluationResult;
+
+        if (current && (current.finalizedAt || current.lockedAt) && correctionMode) {
+          const changed = current.result !== result || (current.remark ?? null) !== remark;
+          if (!changed) {
+            output.push(current);
+            continue;
+          }
+
+          // Administration requested a correction for this month, so finalized
+          // entries may be amended. Keep them finalized and record the change.
+          const corrected = await tx.dailyCleaningEvaluation.update({
+            where: { id: current.id },
+            data: { result, remark },
+            select: evaluationSelect,
+          });
+
+          await tx.activityLog.create({
+            data: {
+              userId: actorUser.id,
+              action: "DAILY_EVALUATION_UPDATED" as ActivityAction,
+              entityType: "DailyCleaningEvaluation",
+              entityId: corrected.id,
+              description: `Corrected finalized cleaning evaluation for ${locationTask.task.name}`,
+              metadata: {
+                locationId,
+                locationTaskId: locationTask.id,
+                evaluationDate: selectedDate,
+                result,
+                remark,
+                previousResult: current.result,
+                previousRemark: current.remark ?? null,
+                correctionReportId: editWindow.reportId,
+              } as Prisma.InputJsonValue,
+            },
+          });
+
+          output.push(corrected);
+          continue;
+        }
 
         if (current && (current.finalizedAt || current.lockedAt)) {
           const unchanged =

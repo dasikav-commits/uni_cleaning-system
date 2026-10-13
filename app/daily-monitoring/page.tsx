@@ -44,7 +44,12 @@ export default async function DailyMonitoringPage({
   }
 
   const selectedLocationId = firstString(params.locationId) ?? "";
-  const selectedDate = getBusinessDateString();
+  // Defaults to today. Other dates are validated by the monitoring services
+  // (e.g. past months are only open while their report is incomplete or has
+  // a correction request).
+  const today = getBusinessDateString();
+  const requestedDate = firstString(params.date) ?? "";
+  const selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : today;
 
   if (appUser.role === "EVALUATING_OFFICER") {
     let pageError: string | null = null;
@@ -107,6 +112,14 @@ export default async function DailyMonitoringPage({
           {pageError ? (
             <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               {pageError}
+              {selectedDate !== today ? (
+                <>
+                  {" "}
+                  <Link href={`/daily-monitoring${selectedLocationId ? `?locationId=${selectedLocationId}` : ""}`} className="font-semibold underline">
+                    Back to today
+                  </Link>
+                </>
+              ) : null}
             </div>
           ) : null}
 
@@ -134,7 +147,7 @@ export default async function DailyMonitoringPage({
             initialData={monitoringData}
             assignedLocations={locations}
             currentFilters={{
-              date: selectedDate,
+              date: monitoringData.selectedDate,
               locationId: monitoringData.selectedLocationId,
             }}
           />

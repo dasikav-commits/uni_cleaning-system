@@ -39,7 +39,12 @@ const detailSelect = {
   processingError: true,
   attendanceHistory: true,
   createdAt: true,
+  resubmittedAt: true,
   taskSummaries: { select: { ...taskSummarySelect, locationTaskId: true } },
+  administrationReviews: {
+    orderBy: { reviewedAt: "desc" },
+    select: { id: true, decision: true, remarks: true, reviewedAt: true, reviewer: { select: { name: true } } },
+  },
 } satisfies Prisma.MonthlyEvaluationReportSelect;
 
 type ReportAccess = {

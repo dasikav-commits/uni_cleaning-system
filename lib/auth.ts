@@ -12,16 +12,28 @@ export const roleRedirectPath: Record<UserRole, string> = {
 
 export type AuthContext = {
   sessionUser: Awaited<ReturnType<typeof getSupabaseUser>>;
+  /** The application user, only when the account is active. */
   appUser: User | null;
+  /**
+   * Set instead of `appUser` when the account exists but is inactive (for
+   * example a self-signup still waiting for GAA approval). Keeping inactive
+   * users out of `appUser` means every page that checks `appUser` denies them.
+   */
+  inactiveUser?: User | null;
 };
+
+export const INACTIVE_ACCOUNT_MESSAGE =
+  "Your account is not active. If you just signed up, a GAA administrator must approve your account before you can sign in.";
 
 export class AuthError extends Error {
   status: number;
+  code: string;
 
-  constructor(message: string, status = 403) {
+  constructor(message: string, status = 403, code = status === 401 ? "UNAUTHORIZED" : "ACCESS_DENIED") {
     super(message);
     this.name = "AuthError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -52,14 +64,23 @@ export async function getAuthContext(): Promise<AuthContext> {
   }
 
   const appUser = await getApplicationUserBySupabaseId(sessionUser.id);
+
+  if (appUser && !appUser.active) {
+    return { sessionUser, appUser: null, inactiveUser: appUser };
+  }
+
   return { sessionUser, appUser };
 }
 
 export async function requireAuthenticatedUser() {
-  const { sessionUser, appUser } = await getAuthContext();
+  const { sessionUser, appUser, inactiveUser } = await getAuthContext();
 
   if (!sessionUser) {
     throw new AuthError("Unauthorized", 401);
+  }
+
+  if (inactiveUser) {
+    throw new AuthError(INACTIVE_ACCOUNT_MESSAGE, 403, "ACCOUNT_INACTIVE");
   }
 
   if (!appUser) {
@@ -70,7 +91,7 @@ export async function requireAuthenticatedUser() {
   }
 
   if (!appUser.active) {
-    throw new AuthError("Your account is inactive.", 403);
+    throw new AuthError(INACTIVE_ACCOUNT_MESSAGE, 403, "ACCOUNT_INACTIVE");
   }
 
   return { sessionUser, appUser };

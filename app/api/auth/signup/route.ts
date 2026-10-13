@@ -1,6 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { provisionSelfServiceUser } from "@/lib/account-provisioning";
+import { InvalidRequestError, readJsonBody } from "@/lib/api-errors";
 import { isApplicationRole } from "@/lib/application-roles";
 
 type SignupRequest = {
@@ -12,7 +14,7 @@ type SignupRequest = {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = await readJsonBody(request);
     const { email, password, name, role } = body as Partial<SignupRequest>;
 
     if (
@@ -102,15 +104,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Failed to create account" }, { status: 500 });
     }
 
+    let provisioned: Awaited<ReturnType<typeof provisionSelfServiceUser>>;
     try {
-      await prisma.user.create({
-        data: {
-          id: data.user.id,
-          email: normalizedEmail,
-          name: normalizedName,
-          role,
-          active: true,
-        },
+      provisioned = await provisionSelfServiceUser(prisma, {
+        id: data.user.id,
+        email: normalizedEmail,
+        name: normalizedName,
+        requestedRole: role,
       });
     } catch (databaseError) {
       await supabase.auth.admin.deleteUser(data.user.id);
@@ -124,16 +124,22 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         success: true,
-        message: "Account created successfully. You can now log in.",
+        pendingApproval: provisioned.pendingApproval,
+        message: provisioned.pendingApproval
+          ? "Account created. A GAA administrator must approve it before you can sign in."
+          : "Account created as the first GAA administrator. You can now log in.",
         user: {
-          id: data.user?.id,
-          email: data.user?.email,
-          role,
+          id: data.user.id,
+          email: data.user.email,
+          role: provisioned.user.role,
         },
       },
       { status: 201 }
     );
   } catch (error) {
+    if (error instanceof InvalidRequestError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error("Signup error:", error);
     return NextResponse.json(
       { error: "Internal server error" },

@@ -6,6 +6,12 @@ type PrismaMock = {
   evaluatingOfficerAssignment: {
     findFirst: Mock;
   };
+  location: {
+    findUnique: Mock;
+  };
+  monthlyEvaluationReport: {
+    findFirst: Mock;
+  };
   locationTask: {
     findMany: Mock;
   };
@@ -93,6 +99,13 @@ function createPrismaMock(): PrismaMock {
   return {
     evaluatingOfficerAssignment: {
       findFirst: vi.fn(),
+    },
+    location: {
+      findUnique: vi.fn().mockResolvedValue({ active: true }),
+    },
+    monthlyEvaluationReport: {
+      // No open (DRAFT / CORRECTION_REQUESTED) report unless a test says otherwise.
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     locationTask: {
       findMany: vi.fn(),
@@ -259,5 +272,83 @@ describe("saveOfficerEvaluations", () => {
       }),
     });
     expect(result.evaluations[0]?.result).toBe("X");
+  });
+
+  it("rejects evaluations for an inactive location", async () => {
+    prismaMock.evaluatingOfficerAssignment.findFirst.mockResolvedValue({ id: "assignment-1" });
+    prismaMock.location.findUnique.mockResolvedValue({ active: false });
+
+    await expect(
+      saveOfficerEvaluations(
+        prismaMock as unknown as Parameters<typeof saveOfficerEvaluations>[0],
+        officer,
+        { locationId, evaluationDate: todayString, items: [{ locationTaskId: taskId, result: "P" }] },
+      ),
+    ).rejects.toMatchObject({ code: "LOCATION_INACTIVE", status: 409 });
+    expect(prismaMock.dailyCleaningEvaluation.create).not.toHaveBeenCalled();
+  });
+
+  it("allows correcting a finalized past evaluation while the month's report has a correction request", async () => {
+    const pastDate = new Date(`${yesterdayString}T00:00:00Z`);
+    prismaMock.monthlyEvaluationReport.findFirst.mockResolvedValue({
+      id: "report-1",
+      status: "CORRECTION_REQUESTED",
+      month: Number(yesterdayString.slice(5, 7)),
+      year: Number(yesterdayString.slice(0, 4)),
+    });
+    prismaMock.evaluatingOfficerAssignment.findFirst.mockResolvedValue({ id: "assignment-1" });
+    prismaMock.locationTask.findMany.mockResolvedValue([createLocationTask()]);
+    const finalizedAt = new Date(`${yesterdayString}T05:00:00Z`);
+    prismaMock.dailyCleaningEvaluation.findMany.mockResolvedValue([
+      createEvaluationRecord({ evaluationDate: pastDate, result: "P", remark: "Good", finalizedAt, lockedAt: finalizedAt }),
+    ]);
+    prismaMock.dailyCleaningEvaluation.update.mockResolvedValue(
+      createEvaluationRecord({ evaluationDate: pastDate, result: "X", remark: "Floor was dirty", finalizedAt, lockedAt: finalizedAt }),
+    );
+
+    const result = await saveOfficerEvaluations(
+      prismaMock as unknown as Parameters<typeof saveOfficerEvaluations>[0],
+      officer,
+      {
+        locationId,
+        evaluationDate: yesterdayString,
+        items: [{ locationTaskId: taskId, result: "X", remark: "Floor was dirty" }],
+      },
+    );
+
+    expect(prismaMock.dailyCleaningEvaluation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { result: "X", remark: "Floor was dirty" } }),
+    );
+    expect(prismaMock.activityLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "DAILY_EVALUATION_UPDATED",
+        metadata: expect.objectContaining({ previousResult: "P", correctionReportId: "report-1" }),
+      }),
+    });
+    expect(result.evaluations[0]?.finalized).toBe(true);
+  });
+
+  it("only allows filling in, not changing, finalized evaluations of an incomplete month", async () => {
+    const pastDate = new Date(`${yesterdayString}T00:00:00Z`);
+    prismaMock.monthlyEvaluationReport.findFirst.mockResolvedValue({
+      id: "report-1",
+      status: "DRAFT",
+      month: Number(yesterdayString.slice(5, 7)),
+      year: Number(yesterdayString.slice(0, 4)),
+    });
+    prismaMock.evaluatingOfficerAssignment.findFirst.mockResolvedValue({ id: "assignment-1" });
+    prismaMock.locationTask.findMany.mockResolvedValue([createLocationTask()]);
+    const finalizedAt = new Date(`${yesterdayString}T05:00:00Z`);
+    prismaMock.dailyCleaningEvaluation.findMany.mockResolvedValue([
+      createEvaluationRecord({ evaluationDate: pastDate, result: "P", finalizedAt, lockedAt: finalizedAt }),
+    ]);
+
+    await expect(
+      saveOfficerEvaluations(
+        prismaMock as unknown as Parameters<typeof saveOfficerEvaluations>[0],
+        officer,
+        { locationId, evaluationDate: yesterdayString, items: [{ locationTaskId: taskId, result: "X" }] },
+      ),
+    ).rejects.toMatchObject({ code: "EVALUATION_FINALIZED" });
   });
 });

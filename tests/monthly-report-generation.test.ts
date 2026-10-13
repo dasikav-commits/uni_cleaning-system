@@ -5,7 +5,7 @@ const dates = Array.from({ length: 31 }, (_, index) => `2026-08-${String(index +
 const baseTask = { id: "location-task-1", locationId: "location-1", frequency: "DAILY" as const, allocatedAmount: "20000", createdAt: new Date("2026-07-01T00:00:00Z"), task: { id: "task-1", name: "Floor Cleaning", category: "DAILY" as const, frequency: "DAILY" as const } };
 type TaskInput = Parameters<typeof buildTaskSummary>[0];
 const task = baseTask as unknown as TaskInput;
-function evaluation(date: string, result: string) { return { evaluationDate: new Date(`${date}T00:00:00Z`), result, remark: null, evaluatingOfficer: { id: "officer-1", name: "Officer" }, createdAt: new Date(`${date}T01:00:00Z`), finalizedAt: new Date(`${date}T02:00:00Z`), lockedAt: new Date(`${date}T02:00:00Z`) }; }
+function evaluation(date: string, result: string) { return { id: `evaluation-${date}`, evaluationDate: new Date(`${date}T00:00:00Z`), result, remark: null, evaluatingOfficer: { id: "officer-1", name: "Officer" }, createdAt: new Date(`${date}T01:00:00Z`), finalizedAt: new Date(`${date}T02:00:00Z`), lockedAt: new Date(`${date}T02:00:00Z`) }; }
 
 describe("monthly report generation rules", () => {
   it("calculates P20 X5 NA1 as 80 percent", () => {
@@ -37,6 +37,21 @@ describe("monthly report generation rules", () => {
     const monthly = { ...task, frequency: "MONTHLY" as const, createdAt: new Date("2026-08-03T00:00:00Z") };
     expect(buildTaskSummary(weekly, ["2026-08-03", "2026-08-10", "2026-08-11"], [evaluation("2026-08-03", "P"), evaluation("2026-08-10", "X")]).expectedOccurrences).toBe(2);
     expect(buildTaskSummary(monthly, ["2026-08-03", "2026-08-10", "2026-08-31"], [evaluation("2026-08-03", "P")]).expectedOccurrences).toBe(1);
+  });
+
+  it("keeps monthly tasks anchored on the 31st due on the last day of shorter months", () => {
+    const monthly = { ...task, frequency: "MONTHLY" as const, createdAt: new Date("2026-01-31T00:00:00Z") };
+    const september = Array.from({ length: 30 }, (_, index) => `2026-09-${String(index + 1).padStart(2, "0")}`);
+    const february = Array.from({ length: 28 }, (_, index) => `2027-02-${String(index + 1).padStart(2, "0")}`);
+    expect(buildTaskSummary(monthly, september, []).expectedOccurrences).toBe(1);
+    expect(buildTaskSummary(monthly, february, []).expectedOccurrences).toBe(1);
+    expect(buildTaskSummary(monthly, dates, []).expectedOccurrences).toBe(1);
+  });
+
+  it("records the evaluation id (not the officer id) in the evaluation history", () => {
+    const result = buildTaskSummary(task, dates, [evaluation("2026-08-01", "P")]);
+    const history = result.evaluationHistory as unknown as Array<{ id: string; evaluatingOfficerId: string }>;
+    expect(history[0]).toMatchObject({ id: "evaluation-2026-08-01", evaluatingOfficerId: "officer-1" });
   });
 
   it("uses the previous business month and calendar-safe period boundaries", () => {

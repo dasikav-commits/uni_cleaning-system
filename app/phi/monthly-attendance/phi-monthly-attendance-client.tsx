@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { PHI_MONTHLY_ATTENDANCE_CATEGORIES } from "@/lib/phi-monthly-attendance";
+import {
+  PHI_MONTHLY_ATTENDANCE_CATEGORIES,
+  isPhiMonthlyAttendanceLocked,
+} from "@/lib/phi-monthly-attendance-categories";
 
 type SerializableReport = {
   id: string;
@@ -45,6 +48,15 @@ function defaultRows(categories: Props["categories"]) {
     deductionRate: category.defaultRate,
   }));
 }
+
+const statusLabels: Record<string, string> = {
+  DRAFT: "Draft",
+  SUBMITTED: "Submitted - awaiting Administration review",
+  RESUBMITTED: "Resubmitted - awaiting Administration review",
+  CORRECTION_REQUESTED: "Correction requested - please update and resubmit",
+  ADMIN_APPROVED: "Approved by Administration",
+  ADMIN_REJECTED: "Rejected by Administration",
+};
 
 function formatAmount(value: string) {
   const parsed = Number(value);
@@ -116,11 +128,28 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
 
     setMessage(action === "submit" ? "Report submitted successfully." : "Draft saved successfully.");
     if (payload.report) {
-      startTransition(() => router.refresh());
+      router.refresh();
     }
   }
 
   const savedReportLink = savedReport ? `/phi/monthly-attendance/${savedReport.id}` : null;
+  const locked = isPhiMonthlyAttendanceLocked(savedReport?.status);
+  const statusText = savedReport ? statusLabels[savedReport.status] ?? savedReport.status : "Not saved yet";
+
+  function run(action: "save" | "submit") {
+    if (action === "submit" && !window.confirm("Submit this monthly report for Administration review? You will not be able to edit it unless a correction is requested.")) {
+      return;
+    }
+    // Awaiting inside the transition keeps `isPending` true until the request
+    // finishes, which prevents double submissions.
+    startTransition(async () => {
+      try {
+        await persist(action);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : action === "submit" ? "Unable to submit the report." : "Unable to save the report.");
+      }
+    });
+  }
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -130,7 +159,10 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
             Monthly Attendance Summary
           </p>
           <p className="mt-1 text-sm text-slate-600">
-            Reporting period: {new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(new Date(Date.UTC(year, month - 1, 1)))}
+            Reporting period: {new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, 1)))}
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            Status: <span className="font-semibold text-slate-900">{statusText}</span>
           </p>
         </div>
         {savedReportLink ? (
@@ -171,11 +203,12 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
                         const value = event.target.value;
                         setRows((current) => current.map((item) => (item.category === row.category ? { ...item, employeeCount: value } : item)));
                       }}
+                      disabled={locked || isPending}
                       inputMode="numeric"
                       type="number"
                       min="0"
                       step="1"
-                      className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900"
+                      className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
                     />
                   </label>
                   <label className="block">
@@ -188,11 +221,12 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
                         const value = event.target.value;
                         setRows((current) => current.map((item) => (item.category === row.category ? { ...item, deductionRate: value } : item)));
                       }}
+                      disabled={locked || isPending}
                       inputMode="decimal"
                       type="number"
                       min="0"
                       step="0.01"
-                      className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900"
+                      className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
                     />
                   </label>
                 </div>
@@ -209,30 +243,28 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
         {error ? <p className="mt-3 text-sm text-red-200">{error}</p> : null}
       </div>
 
+      {locked ? (
+        <p className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          This report is locked ({statusText.toLowerCase()}). It can only be edited again if Administration requests a correction.
+        </p>
+      ) : null}
+
       <div className="mt-5 flex flex-col gap-3 sm:flex-row">
         <button
           type="button"
-          disabled={isPending}
-          onClick={() => {
-            startTransition(() => {
-              persist("save").catch((caught) => setError(caught instanceof Error ? caught.message : "Unable to save the report."));
-            });
-          }}
+          disabled={isPending || locked}
+          onClick={() => run("save")}
           className="rounded-2xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isPending ? "Saving..." : "Save Draft"}
+          {isPending ? "Please wait..." : "Save Draft"}
         </button>
         <button
           type="button"
-          disabled={isPending}
-          onClick={() => {
-            startTransition(() => {
-              persist("submit").catch((caught) => setError(caught instanceof Error ? caught.message : "Unable to submit the report."));
-            });
-          }}
+          disabled={isPending || locked}
+          onClick={() => run("submit")}
           className="rounded-2xl bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isPending ? "Submitting..." : "Submit Monthly Report"}
+          {isPending ? "Please wait..." : savedReport?.status === "CORRECTION_REQUESTED" ? "Resubmit Monthly Report" : "Submit Monthly Report"}
         </button>
       </div>
     </section>

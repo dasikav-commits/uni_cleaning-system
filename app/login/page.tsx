@@ -108,7 +108,7 @@ function LoginForm() {
         <section className="relative hidden overflow-hidden bg-[#063b87] px-12 py-14 text-white lg:flex lg:flex-col lg:items-center lg:justify-between">
           <div className="absolute inset-0 opacity-30 [background-image:repeating-radial-gradient(ellipse_at_top_left,transparent_0,transparent_24px,rgba(77,190,255,0.45)_25px,transparent_26px)]" />
           <div className="relative z-10 flex flex-1 flex-col items-center justify-center text-center">
-            <Image src="/UniLogo.png" alt="University of Sri Lanka emblem" width={220} height={290} className="h-auto w-[220px] object-contain" priority />
+            <Image src="/UniLogo.png" alt="University of Sri Lanka emblem" width={310} height={439} className="h-auto w-[220px] object-contain" priority />
             <h1 className="mt-7 max-w-[430px] text-[36px] font-bold leading-[1.22] tracking-[-0.02em]">
               University Cleaning<br />Monitoring System
             </h1>

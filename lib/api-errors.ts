@@ -37,6 +37,12 @@ function isExpectedError(error: unknown): error is ExpectedError {
   );
 }
 
+/** Prisma P2021 (table missing) / P2022 (column missing): the database needs the schema repair. */
+function isSchemaOutOfDateError(error: unknown) {
+  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  return code === "P2021" || code === "P2022";
+}
+
 export function apiErrorResponse(error: unknown, fallbackMessage = "An unexpected error occurred.") {
   if (isExpectedError(error)) {
     const code = typeof error.code === "string" ? error.code : undefined;
@@ -47,6 +53,12 @@ export function apiErrorResponse(error: unknown, fallbackMessage = "An unexpecte
   }
 
   console.error(fallbackMessage, error);
+  if (isSchemaOutOfDateError(error)) {
+    console.error(
+      "The database schema is behind prisma/schema.prisma (missing table or column). " +
+        "Run the scripts in prisma/repair/ - see prisma/repair/README.md.",
+    );
+  }
   return NextResponse.json({ error: fallbackMessage }, { status: 500 });
 }
 

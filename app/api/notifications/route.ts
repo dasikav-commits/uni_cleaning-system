@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/auth";
 import { apiErrorResponse } from "@/lib/api-errors";
-import { listNotifications, markAllNotificationsRead } from "@/lib/system-administration";
+import { listNotifications, markAllNotificationsRead } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {

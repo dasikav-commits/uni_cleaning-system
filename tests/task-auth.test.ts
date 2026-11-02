@@ -7,7 +7,7 @@ const supabaseState = {
     id: string;
     name: string;
     email: string;
-    role: "GAA" | "EVALUATING_OFFICER" | "PHI" | "ADMINISTRATION_OFFICER" | "VICE_CHANCELLOR";
+    role: "DEPUTY_REGISTRAR" | "UNIT_OFFICER" | "PHI" | "SUB_WARDEN" | "CURATOR";
     active: boolean;
   },
 };
@@ -38,19 +38,19 @@ beforeEach(() => {
 });
 
 describe("task authorization", () => {
-  it("allows an active GAA user", async () => {
-    supabaseState.sessionUser = { id: "supabase-user-1", email: "gaa@example.com" };
+  it("allows an active Deputy Registrar", async () => {
+    supabaseState.sessionUser = { id: "supabase-user-1", email: "dr@example.com" };
     supabaseState.appUser = {
       id: "supabase-user-1",
-      name: "GAA User",
-      email: "gaa@example.com",
-      role: "GAA",
+      name: "Deputy Registrar",
+      email: "dr@example.com",
+      role: "DEPUTY_REGISTRAR",
       active: true,
     };
 
-    await expect(requireRole("GAA")).resolves.toMatchObject({
+    await expect(requireRole("DEPUTY_REGISTRAR")).resolves.toMatchObject({
       appUser: expect.objectContaining({
-        role: "GAA",
+        role: "DEPUTY_REGISTRAR",
         active: true,
       }),
     });
@@ -62,27 +62,27 @@ describe("task authorization", () => {
     });
   });
 
-  it("rejects inactive GAA users", async () => {
-    supabaseState.sessionUser = { id: "supabase-user-1", email: "gaa@example.com" };
+  it("rejects inactive Deputy Registrars", async () => {
+    supabaseState.sessionUser = { id: "supabase-user-1", email: "dr@example.com" };
     supabaseState.appUser = {
       id: "supabase-user-1",
-      name: "GAA User",
-      email: "gaa@example.com",
-      role: "GAA",
+      name: "Deputy Registrar",
+      email: "dr@example.com",
+      role: "DEPUTY_REGISTRAR",
       active: false,
     };
 
-    await expect(requireRole("GAA")).rejects.toMatchObject({
+    await expect(requireRole("DEPUTY_REGISTRAR")).rejects.toMatchObject({
       status: 403,
       message: expect.stringContaining("Your account is not active"),
     });
   });
 
   for (const role of [
-    "EVALUATING_OFFICER",
+    "UNIT_OFFICER",
     "PHI",
-    "ADMINISTRATION_OFFICER",
-    "VICE_CHANCELLOR",
+    "SUB_WARDEN",
+    "CURATOR",
   ] as const) {
     it(`rejects ${role}`, async () => {
       supabaseState.sessionUser = { id: "supabase-user-1", email: "role@example.com" };
@@ -94,8 +94,8 @@ describe("task authorization", () => {
         active: true,
       };
 
-      await expect(requireRole("GAA")).rejects.toBeInstanceOf(AuthError);
-      await expect(requireRole("GAA")).rejects.toMatchObject({
+      await expect(requireRole("DEPUTY_REGISTRAR")).rejects.toBeInstanceOf(AuthError);
+      await expect(requireRole("DEPUTY_REGISTRAR")).rejects.toMatchObject({
         status: 403,
       });
     });

@@ -20,7 +20,7 @@ async function completeApplicationSession(sessionUser: SupabaseUser) {
     try {
       // Never grant access automatically: user_metadata is editable by the
       // user, so the profile is created inactive and must be approved by a
-      // GAA (except the very first GAA, see provisionSelfServiceUser).
+      // Deputy Registrar (except the very first DR, see provisionSelfServiceUser).
       const metadataName = sessionUser.user_metadata?.name;
       ({ user } = await provisionSelfServiceUser(prisma, {
         id: sessionUser.id,

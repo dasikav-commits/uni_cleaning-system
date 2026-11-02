@@ -39,7 +39,7 @@ export default async function DashboardPage() {
           </h1>
           <p className="mt-3 text-sm leading-7 text-slate-300">
             You are authenticated in Supabase, but there is no matching PostgreSQL
-            User row for this Supabase UUID yet. Please ask an administrator to
+            User row for this Supabase UUID yet. Please ask the Deputy Registrar to
             create the application profile.
           </p>
           <div className="mt-6">

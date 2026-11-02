@@ -3,11 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const roleRedirectPath: Record<UserRole, string> = {
-  GAA: "/dashboard/gaa",
-  EVALUATING_OFFICER: "/dashboard/evaluating-officer",
-  PHI: "/dashboard/phi",
-  ADMINISTRATION_OFFICER: "/dashboard/administration",
-  VICE_CHANCELLOR: "/dashboard/vice-chancellor",
+  DEPUTY_REGISTRAR: "/dr",
+  PHI: "/reports",
+  FACULTY_COORDINATOR: "/reports",
+  SUB_WARDEN: "/reports",
+  CURATOR: "/reports",
+  UNIT_OFFICER: "/reports",
 };
 
 export type AuthContext = {
@@ -16,14 +17,14 @@ export type AuthContext = {
   appUser: User | null;
   /**
    * Set instead of `appUser` when the account exists but is inactive (for
-   * example a self-signup still waiting for GAA approval). Keeping inactive
+   * example a self-signup still waiting for the Deputy Registrar's approval). Keeping inactive
    * users out of `appUser` means every page that checks `appUser` denies them.
    */
   inactiveUser?: User | null;
 };
 
 export const INACTIVE_ACCOUNT_MESSAGE =
-  "Your account is not active. If you just signed up, a GAA administrator must approve your account before you can sign in.";
+  "Your account is not active. If you just signed up, the Deputy Registrar must approve your account before you can sign in.";
 
 export class AuthError extends Error {
   status: number;
@@ -97,10 +98,11 @@ export async function requireAuthenticatedUser() {
   return { sessionUser, appUser };
 }
 
-export async function requireRole(requiredRole: UserRole) {
+export async function requireRole(requiredRole: UserRole | readonly UserRole[]) {
   const { sessionUser, appUser } = await requireAuthenticatedUser();
+  const allowed: readonly UserRole[] = typeof requiredRole === "string" ? [requiredRole] : requiredRole;
 
-  if (appUser.role !== requiredRole) {
+  if (!allowed.includes(appUser.role)) {
     throw new AuthError("You do not have permission to perform this action.", 403);
   }
 

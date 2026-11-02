@@ -4,6 +4,8 @@ import { AppShell } from "@/app/_components/app-shell";
 import { getAuthContext } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getPhiMonthlyAttendanceReport } from "@/lib/phi-monthly-attendance";
+import { PHI_MONTHLY_ATTENDANCE_CATEGORIES, phiMonthlyStatusLabel } from "@/lib/phi-monthly-attendance-categories";
+import { PhiReviewPanel } from "./phi-review-panel";
 import { PrintReportButton } from "../print-report-button";
 
 function money(value: string | number) {
@@ -38,7 +40,7 @@ export default async function PhiMonthlyAttendanceReportPage({ params }: { param
     redirect("/login");
   }
 
-  if (!appUser || !["PHI", "GAA", "ADMINISTRATION_OFFICER", "VICE_CHANCELLOR"].includes(appUser.role)) {
+  if (!appUser || (appUser.role !== "PHI" && appUser.role !== "DEPUTY_REGISTRAR")) {
     return <main className="p-8">You do not have permission to view this report.</main>;
   }
 
@@ -46,13 +48,15 @@ export default async function PhiMonthlyAttendanceReportPage({ params }: { param
   const report = await getPhiMonthlyAttendanceReport(prisma, { id: appUser.id, role: appUser.role }, id);
   if (!report) notFound();
   const data = serializeReport(report);
+  const isDr = appUser.role === "DEPUTY_REGISTRAR";
+  const categoryLabels = new Map<string, string>(PHI_MONTHLY_ATTENDANCE_CATEGORIES.map((category) => [category.key, category.label]));
 
   return (
     <AppShell user={appUser}>
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 print-report">
         <div className="flex items-center justify-between print:hidden">
-          <Link href="/phi/monthly-attendance" className="text-sm font-semibold text-cyan-700 hover:text-cyan-900">
-            &larr; Back to Monthly Attendance
+          <Link href={isDr ? "/dr/phi-attendance" : "/phi/monthly-attendance"} className="text-sm font-semibold text-cyan-700 hover:text-cyan-900">
+            &larr; Back to {isDr ? "PHI attendance reports" : "Monthly Attendance"}
           </Link>
           <PrintReportButton />
         </div>
@@ -64,9 +68,9 @@ export default async function PhiMonthlyAttendanceReportPage({ params }: { param
           <div className="mt-4 flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h1 className="text-3xl font-semibold text-slate-950">Attendance Report - {dateLabel(data.year, data.month)}</h1>
-              <p className="mt-2 text-sm text-slate-600">Official PHI monthly attendance deduction report.</p>
+              <p className="mt-2 text-sm text-slate-600">PHI monthly attendance - deduction for absence. Kuliyapitiya Premises.</p>
             </div>
-            <span className="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">{data.status}</span>
+            <span className="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">{phiMonthlyStatusLabel(data.status)}</span>
           </div>
 
           <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
@@ -83,7 +87,7 @@ export default async function PhiMonthlyAttendanceReportPage({ params }: { param
                 {data.rows.map((row) => (
                   <tr key={row.id}>
                     <td className="px-4 py-4 text-sm font-medium text-slate-900">
-                      {row.category.replaceAll("_", " ")}
+                      {categoryLabels.get(row.category) ?? row.category.replaceAll("_", " ")}
                     </td>
                     <td className="px-4 py-4 text-sm text-slate-600">{row.employeeCount}</td>
                     <td className="px-4 py-4 text-sm text-slate-600">{money(row.deductionRate)}</td>
@@ -111,10 +115,27 @@ export default async function PhiMonthlyAttendanceReportPage({ params }: { param
             <Info label="Finalized" value={data.finalizedAt ? new Intl.DateTimeFormat("en-GB").format(new Date(data.finalizedAt)) : "-"} />
           </dl>
 
+          {data.reviews.length ? (
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Review history</p>
+              <ul className="mt-2 space-y-2 text-sm text-slate-700">
+                {data.reviews.map((review) => (
+                  <li key={review.id}>
+                    <span className="font-semibold">{review.decision === "APPROVE" ? "Approved" : review.decision === "CORRECTION" ? "Correction requested" : "Rejected"}</span> by {review.reviewer.name} on{" "}
+                    {new Intl.DateTimeFormat("en-GB").format(new Date(review.reviewedAt))}
+                    {review.remarks ? ` - ${review.remarks}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           {data.processingError ? (
             <p className="mt-5 rounded-2xl bg-amber-50 p-4 text-sm text-amber-900">{data.processingError}</p>
           ) : null}
         </section>
+
+        {isDr && (data.status === "SUBMITTED" || data.status === "RESUBMITTED") ? <PhiReviewPanel reportId={data.id} /> : null}
       </div>
     </AppShell>
   );

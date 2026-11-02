@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState, type ReactNode } from "react";
 import type { User, UserRole } from "@/app/generated/prisma/client";
+import { roleLabel } from "@/lib/application-roles";
 import { LogoutButton } from "@/app/_components/logout-button";
 
 type AppUser = Pick<User, "name" | "email" | "role" | "active">;
@@ -11,6 +12,8 @@ type AppUser = Pick<User, "name" | "email" | "role" | "active">;
 type NavItem = {
   href: string;
   label: string;
+  /** Highlight only on this exact path (for section roots such as /dr). */
+  exact?: boolean;
 };
 
 type NavSection = {
@@ -18,102 +21,72 @@ type NavSection = {
   items: NavItem[];
 };
 
+const reporterNav: NavSection[] = [
+  {
+    title: "Reports",
+    items: [{ href: "/reports", label: "Evaluation reports" }],
+  },
+  {
+    title: "Account",
+    items: [
+      { href: "/notifications", label: "Notifications" },
+      { href: "/profile", label: "Profile" },
+    ],
+  },
+];
+
 const navByRole: Record<UserRole, NavSection[]> = {
-  GAA: [
+  DEPUTY_REGISTRAR: [
     {
-      title: "Overview",
-      items: [{ href: "/dashboard/gaa", label: "Dashboard" }],
-    },
-    {
-      title: "Management",
+      title: "Monthly process",
       items: [
-        { href: "/gaa/users", label: "Users" },
-        { href: "/gaa/locations", label: "Locations" },
-        { href: "/gaa/tasks", label: "Cleaning Tasks" },
-        { href: "/gaa/location-tasks", label: "Location <-> Task Assignments" },
+        { href: "/dr", label: "Overview", exact: true },
+        { href: "/dr/evaluations", label: "1. Evaluation reports" },
+        { href: "/dr/phi-attendance", label: "2. PHI attendance" },
+        { href: "/dr/evaluations?category=ADMINISTRATION", label: "3. Main Administration" },
+        { href: "/dr/reports/work-done", label: "4. Amount of work done" },
+        { href: "/dr/reports/attendance", label: "5. Attendance report" },
+        { href: "/dr/reports/final", label: "6. Cleaning & Janitorial Services" },
       ],
     },
     {
-      title: "Assignments",
+      title: "Set-up",
       items: [
-        { href: "/gaa/evaluating-officer-assignments", label: "Evaluating Officer Assignments" },
-        { href: "/gaa/phi-assignments", label: "PHI Assignments" },
-        { href: "/gaa/workers", label: "Cleaning Workers" },
+        { href: "/dr/boq", label: "BOQ & locations" },
+        { href: "/dr/users", label: "Logins" },
+        { href: "/dr/assignments", label: "Location assignments" },
+        { href: "/dr/audit", label: "Audit log" },
       ],
     },
     {
-      title: "Reports",
-      items: [{ href: "/monthly-reports", label: "Monthly Reports" }, { href: "/gaa/payment-recommendations", label: "Payment Recommendations" }, { href: "/gaa/final-reports", label: "Final Reports" }],
-    },
-    {
-      title: "System Administration",
-      items: [{ href: "/system-administration", label: "Quality Control" }, { href: "/system-administration/audit", label: "Audit Logs" }, { href: "/system-administration/notifications", label: "Notifications" }, { href: "/system-administration/reports", label: "Report History" }, { href: "/system-administration/permissions", label: "Permissions" }],
-    },
-  ],
-  EVALUATING_OFFICER: [
-    {
-      title: "Overview",
-      items: [{ href: "/dashboard/evaluating-officer", label: "Dashboard" }],
-    },
-    {
-      title: "Monitoring",
+      title: "Account",
       items: [
-        { href: "/dashboard/evaluating-officer#locations", label: "My Locations" },
-        { href: "/daily-monitoring", label: "Daily Monitoring" },
-      ],
-    },
-    {
-      title: "History",
-      items: [
-        { href: "/evaluating-officer/history", label: "Evaluation History" },
-        { href: "/monthly-reports", label: "Monthly Reports" },
+        { href: "/notifications", label: "Notifications" },
+        { href: "/profile", label: "Profile" },
       ],
     },
   ],
   PHI: [
     {
-      title: "Overview",
-      items: [{ href: "/dashboard/phi", label: "Dashboard" }],
-    },
-    {
-      title: "Monitoring",
+      title: "Reports",
       items: [
-        { href: "/daily-monitoring", label: "Daily Attendance" },
-        { href: "/phi/monthly-attendance", label: "Monthly Attendance" },
+        { href: "/reports", label: "Evaluation reports" },
+        { href: "/phi/daily-attendance", label: "Daily attendance" },
+        { href: "/phi/monthly-attendance", label: "Monthly attendance" },
       ],
     },
-    {
-      title: "History",
-      items: [
-        { href: "/phi/attendance-history", label: "Attendance History" },
-      ],
-    },
+    reporterNav[1],
   ],
-  ADMINISTRATION_OFFICER: [
-    {
-      title: "Overview",
-      items: [
-        { href: "/dashboard/administration", label: "Dashboard" },
-        { href: "/administration/reports", label: "Administration Review" },
-        { href: "/administration/phi-monthly-attendance", label: "PHI Monthly Attendance" },
-        { href: "/monthly-reports", label: "Monthly Reports" },
-      ],
-    },
-  ],
-  VICE_CHANCELLOR: [
-    {
-      title: "Overview",
-      items: [{ href: "/dashboard/vice-chancellor", label: "Dashboard" }],
-    },
-    {
-      title: "Approvals",
-      items: [{ href: "/vice-chancellor/payment-recommendations", label: "Payment Recommendations" }],
-    },
-  ],
+  FACULTY_COORDINATOR: reporterNav,
+  SUB_WARDEN: reporterNav,
+  CURATOR: reporterNav,
+  UNIT_OFFICER: reporterNav,
 };
 
-function isActivePath(pathname: string, href: string) {
-  return pathname === href || pathname.startsWith(`${href}/`);
+function isActivePath(pathname: string, item: NavItem) {
+  const href = item.href.split("?")[0];
+  if (item.href.includes("?")) return false;
+  return item.exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function AppShell({
@@ -146,10 +119,10 @@ export function AppShell({
                 <div className="space-y-1">
                   {section.items.map((item) => (
                     <Link
-                      key={item.href}
+                      key={item.href + item.label}
                       href={item.href}
                       className={`block rounded-2xl px-3 py-2.5 text-sm font-medium transition ${
-                        isActivePath(pathname, item.href)
+                        isActivePath(pathname, item)
                           ? "bg-slate-900 text-white"
                           : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                       }`}
@@ -169,7 +142,7 @@ export function AppShell({
             <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="font-semibold text-slate-900">{user.name}</p>
               <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">
-                {user.role}
+                {roleLabel(user.role)}
               </p>
             </div>
           </div>
@@ -193,7 +166,7 @@ export function AppShell({
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
                 Menu
               </p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">{user.role}</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{roleLabel(user.role)}</p>
             </div>
             <button
               type="button"
@@ -212,11 +185,11 @@ export function AppShell({
                 <div className="space-y-1">
                   {section.items.map((item) => (
                     <Link
-                      key={item.href}
+                      key={item.href + item.label}
                       href={item.href}
                       onClick={() => setDrawerOpen(false)}
                       className={`block rounded-2xl px-3 py-2.5 text-sm font-medium transition ${
-                        isActivePath(pathname, item.href)
+                        isActivePath(pathname, item)
                           ? "bg-slate-900 text-white"
                           : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                       }`}
@@ -247,9 +220,7 @@ export function AppShell({
                     University Cleaning Monitoring System
                   </p>
                   <p className="mt-1 text-sm text-slate-500">
-                    {pathname === "/daily-monitoring"
-                      ? "Daily Monitoring"
-                      : "Role-based administration"}
+                    Kuliyapitiya premises · Cleaning & Janitorial Services
                   </p>
                 </div>
               </div>
@@ -257,7 +228,7 @@ export function AppShell({
               <div className="flex items-center gap-3">
                 <div className="hidden text-right sm:block">
                   <p className="text-sm font-semibold text-slate-900">{user.name}</p>
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{user.role}</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{roleLabel(user.role)}</p>
                 </div>
                 <details className="relative">
                   <summary className="list-none rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:bg-slate-50">
@@ -268,7 +239,7 @@ export function AppShell({
                       <p className="font-semibold text-slate-900">{user.name}</p>
                       <p className="mt-1 text-xs text-slate-500">{user.email}</p>
                       <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {user.role}
+                        {roleLabel(user.role)}
                       </p>
                     </div>
                     <Link

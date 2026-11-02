@@ -3,7 +3,8 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createClient } from "@supabase/supabase-js";
 import { PrismaClient } from "../app/generated/prisma/client";
-import { ensureTestUsers } from "./ensure-test-users";
+import { importKuliyapitiyaBoq } from "../lib/boq-management";
+import { assignTestUserLocations, ensureTestUsers } from "./ensure-test-users";
 import { testUsers } from "./test-users";
 
 const connectionString = process.env.DATABASE_URL;
@@ -48,6 +49,15 @@ async function main() {
 
   if (failures.length > 0) {
     throw new Error(`${failures.length} test user(s) could not be seeded.`);
+  }
+
+  // Load the Kuliyapitiya BOQ (idempotent) as the Deputy Registrar, then assign the logins.
+  const dr = await prisma.user.findFirst({ where: { role: "DEPUTY_REGISTRAR", active: true }, orderBy: { createdAt: "asc" } });
+  if (dr) {
+    const summary = await importKuliyapitiyaBoq(prisma, dr);
+    console.log(`BOQ: ${summary.locationsCreated} location(s) created, ${summary.locationsUpdated} updated, ${summary.itemsCreated} item(s) added.`);
+    const assignments = await assignTestUserLocations(prisma);
+    console.log(`Assignments: ${assignments.assigned} set${assignments.missing.length ? `, missing BOQ numbers ${assignments.missing.join(", ")}` : ""}.`);
   }
 
   console.log("\nSeed complete.\n");

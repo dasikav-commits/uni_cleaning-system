@@ -52,10 +52,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate password (minimum 6 characters)
-    if (password.length < 6) {
+    // Validate password (minimum 8 characters)
+    if (password.length < 8) {
       return NextResponse.json(
-        { error: "Password must be at least 6 characters" },
+        { error: "Password must be at least 8 characters" },
         { status: 400 }
       );
     }
@@ -81,11 +81,13 @@ export async function POST(request: Request) {
       },
     });
 
-    // Create user in Supabase Auth
+    // Create the user in Supabase Auth (the password is hashed by Supabase).
+    // The address is not confirmed yet: Supabase e-mails a verification link
+    // below, and the Deputy Registrar must still approve the account.
     const { data, error } = await supabase.auth.admin.createUser({
       email: normalizedEmail,
       password,
-      email_confirm: true,
+      email_confirm: false,
       user_metadata: {
         name: normalizedName,
         role,
@@ -121,13 +123,35 @@ export async function POST(request: Request) {
       );
     }
 
+    // Send the verification e-mail through Supabase Auth (uses the SMTP settings
+    // of the Supabase project). A failure here must not undo the signup: the
+    // user can ask for a new link from the sign-in page.
+    let verificationSent = true;
+    try {
+      const origin = request.headers.get("origin") ?? new URL(request.url).origin;
+      const { error: resendError } = await supabase.auth.resend({
+        type: "signup",
+        email: normalizedEmail,
+        options: { emailRedirectTo: `${origin}/login?verified=1` },
+      });
+      if (resendError) throw resendError;
+    } catch (verificationError) {
+      verificationSent = false;
+      console.error("Signup verification e-mail failed", verificationError);
+    }
+
+    const verifyText = verificationSent
+      ? " We have sent a verification link to your e-mail address - open it to confirm your address."
+      : "";
+
     return NextResponse.json(
       {
         success: true,
         pendingApproval: provisioned.pendingApproval,
+        verificationSent,
         message: provisioned.pendingApproval
-          ? "Account created. A GAA administrator must approve it before you can sign in."
-          : "Account created as the first GAA administrator. You can now log in.",
+          ? `Account created.${verifyText} The Deputy Registrar must approve your account before you can sign in.`
+          : `Account created as the first Deputy Registrar.${verifyText} You can then sign in.`,
         user: {
           id: data.user.id,
           email: data.user.email,

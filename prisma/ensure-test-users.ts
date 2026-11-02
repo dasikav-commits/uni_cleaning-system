@@ -153,3 +153,35 @@ export async function ensureTestUsers(
 
   return results;
 }
+
+/**
+ * Assigns every test login to its Kuliyapitiya locations (by BOQ number).
+ * Locations that do not exist yet (BOQ not loaded) are reported as missing.
+ */
+export async function assignTestUserLocations(prisma: PrismaClient) {
+  const locations = await prisma.location.findMany({ where: { boqNumber: { not: null } }, select: { id: true, boqNumber: true } });
+  const byNumber = new Map(locations.map((location) => [location.boqNumber, location.id]));
+  let assigned = 0;
+  const missing = new Set<number>();
+
+  for (const seed of testUsers) {
+    if (!seed.boqNumbers?.length) continue;
+    const user = await prisma.user.findUnique({ where: { email: seed.email }, select: { id: true } });
+    if (!user) continue;
+    for (const boqNumber of seed.boqNumbers) {
+      const locationId = byNumber.get(boqNumber);
+      if (!locationId) {
+        missing.add(boqNumber);
+        continue;
+      }
+      await prisma.reportingAssignment.upsert({
+        where: { userId_locationId: { userId: user.id, locationId } },
+        create: { userId: user.id, locationId, active: true },
+        update: { active: true },
+      });
+      assigned += 1;
+    }
+  }
+
+  return { assigned, missing: [...missing].sort((a, b) => a - b) };
+}

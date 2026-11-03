@@ -7,12 +7,57 @@ datasource db {
   provider = "postgresql"
 }
 
+/// Logins of the cleaning monitoring process.
+/// DEPUTY_REGISTRAR is the administrator: manages users, locations and the BOQ,
+/// gathers the evaluation reports and prepares the three monthly reports.
+/// Every other role submits evaluation reports for the locations assigned to it.
 enum UserRole {
-  GAA
-  EVALUATING_OFFICER
+  DEPUTY_REGISTRAR
   PHI
-  ADMINISTRATION_OFFICER
-  VICE_CHANCELLOR
+  FACULTY_COORDINATOR
+  SUB_WARDEN
+  CURATOR
+  UNIT_OFFICER
+}
+
+/// How a BOQ location is grouped (drives filtering and which login normally reports it).
+enum LocationCategory {
+  FACULTY
+  ADMINISTRATION
+  HALL
+  COMMON_UNIT
+  LANDSCAPE
+  EXTERNAL_SERVICE
+}
+
+/// SCHEDULED: each BOQ row is evaluated by ticking its scheduled occurrences.
+/// RATE_BASED: each row is paid as quantity x rate (toilet pits, stray animals).
+enum EvaluationFormat {
+  SCHEDULED
+  RATE_BASED
+}
+
+enum BoqFrequency {
+  TWICE_DAILY
+  DAILY
+  WEEKLY
+  MONTHLY
+  ANNUAL
+  WHEN_NECESSARY
+  ON_REQUEST
+  PER_SERVICE
+}
+
+enum EvaluationReportStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  ACCEPTED
+}
+
+enum PaymentReportStatus {
+  DRAFT
+  FINALIZED
 }
 
 enum TaskCategory {
@@ -141,6 +186,22 @@ enum ActivityAction {
   WORKER_ASSIGNMENT_UPDATED
   WORKER_ASSIGNMENT_ACTIVATED
   WORKER_ASSIGNMENT_DEACTIVATED
+  BOQ_IMPORTED
+  BOQ_ITEM_CREATED
+  BOQ_ITEM_UPDATED
+  REPORTING_ASSIGNMENT_CREATED
+  REPORTING_ASSIGNMENT_UPDATED
+  EVALUATION_REPORT_STARTED
+  EVALUATION_REPORT_UPDATED
+  EVALUATION_REPORT_SUBMITTED
+  EVALUATION_REPORT_RETURNED
+  EVALUATION_REPORT_ACCEPTED
+  EVALUATION_REPORT_REOPENED
+  PHI_DAILY_ATTENDANCE_SAVED
+  PAYMENT_REPORT_PREPARED
+  PAYMENT_REPORT_UPDATED
+  PAYMENT_REPORT_FINALIZED
+  PAYMENT_REPORT_REOPENED
 }
 
 enum NotificationEvent {
@@ -154,6 +215,11 @@ enum NotificationEvent {
   VC_APPROVED
   VC_REJECTED
   VC_REQUESTED_CLARIFICATION
+  EVALUATION_REPORT_SUBMITTED
+  EVALUATION_REPORT_RETURNED
+  EVALUATION_REPORT_ACCEPTED
+  PHI_ATTENDANCE_SUBMITTED
+  PAYMENT_REPORT_FINALIZED
 }
 
 model User {
@@ -182,16 +248,40 @@ model User {
   vcApprovals                  VCApproval[]
   activityLogs                 ActivityLog[]
   notifications                Notification[]
+
+  reportingAssignments         ReportingAssignment[]
+  createdEvaluationReports     EvaluationReport[]        @relation("EvaluationReportCreator")
+  submittedEvaluationReports   EvaluationReport[]        @relation("EvaluationReportSubmitter")
+  reviewedEvaluationReports    EvaluationReport[]        @relation("EvaluationReportReviewer")
+  phiDailyAttendances          PhiDailyAttendance[]
+  createdPaymentReports        MonthlyPaymentReport[]    @relation("PaymentReportCreator")
+  finalizedPaymentReports      MonthlyPaymentReport[]    @relation("PaymentReportFinalizer")
 }
 
 model Location {
-  id              String   @id @default(cuid())
-  code            String   @unique
-  name            String
-  minimumWorkers  Int?
-  active          Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               String           @id @default(cuid())
+  code             String           @unique
+  name             String
+  /// Line number (1-28) in the "Cleaning & Janitorial Services" report.
+  boqNumber        Int?             @unique
+  /// Short heading used in the "Amount of work done" report (e.g. BSF, FAS).
+  shortName        String?
+  /// Line description, e.g. "Cleaning and Janitorial Services at the Medical Centre".
+  boqDescription   String?
+  category         LocationCategory @default(COMMON_UNIT)
+  evaluationFormat EvaluationFormat @default(SCHEDULED)
+  /// Fixed monthly BOQ amount. Required for RATE_BASED services; for SCHEDULED
+  /// locations it is optional and defaults to the sum of the BOQ items.
+  boqAmount        Decimal?         @db.Decimal(15, 2)
+  minimumWorkers   Int?
+  active           Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  boqItems                    BoqItem[]
+  reportingAssignments        ReportingAssignment[]
+  evaluationReports           EvaluationReport[]
+  paymentReportLines          MonthlyPaymentReportLine[]
 
   locationTasks               LocationTask[]
   workerAssignments           WorkerLocationAssignment[]
@@ -203,6 +293,14 @@ model Location {
   monthlyReports              MonthlyEvaluationReport[]
   additionalCleaningTasks     AdditionalCleaningTask[]
 }
+
+// ---------------------------------------------------------------------------
+// Legacy models of the earlier task / worker / Vice-Chancellor workflow.
+// They are no longer used by the application (replaced by BoqItem,
+// EvaluationReport, PhiDailyAttendance and MonthlyPaymentReport) and are kept
+// only so existing data is not dropped. PhiMonthlyAttendance*, ActivityLog and
+// Notification further below are still in use.
+// ---------------------------------------------------------------------------
 
 model CleaningTask {
   id          String        @id @default(cuid())
@@ -686,4 +784,192 @@ model Notification {
   @@index([recipientUserId, readAt])
   @@index([event])
   @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Cleaning monitoring process (BOQ -> evaluation reports -> monthly reports)
+// ---------------------------------------------------------------------------
+
+/// One row of a location's Bill of Quantities, e.g. "1 (a) Dust mopping ... Daily 50,000.00".
+model BoqItem {
+  id            String       @id @default(cuid())
+  locationId    String
+  /// Item number as printed in the BOQ ("1", "2", "i", "ii").
+  itemNo        String
+  /// Sub item ("a", "a.I", "Zone 1", "Carpet roads"). Empty when the item has none.
+  subItem       String       @default("")
+  description   String
+  frequency     BoqFrequency
+  /// Monthly amount (Rs.) for SCHEDULED items.
+  monthlyAmount Decimal      @default(0) @db.Decimal(15, 2)
+  /// RATE_BASED items: amount paid per service / per animal.
+  unitRate      Decimal?     @db.Decimal(15, 2)
+  unitLabel     String?
+  /// RATE_BASED items: planned services/animals per year (BOQ "Frequency per year").
+  plannedPerYear Int?
+  /// RATE_BASED items: fine per unit not delivered (e.g. Rs. 7,500 per animal not removed).
+  penaltyRate   Decimal?     @db.Decimal(15, 2)
+  /// Extra detail such as pit sizes.
+  details       String?
+  sortOrder     Int          @default(0)
+  active        Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  location      Location     @relation(fields: [locationId], references: [id])
+  reportRows    EvaluationReportRow[]
+
+  @@index([locationId, sortOrder])
+}
+
+/// Which login submits the evaluation report of which location.
+model ReportingAssignment {
+  id         String   @id @default(cuid())
+  userId     String
+  locationId String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
+
+  @@unique([userId, locationId])
+  @@index([locationId])
+}
+
+/// Monthly evaluation report of one location (one of the 28 reports).
+model EvaluationReport {
+  id             String                 @id @default(cuid())
+  locationId     String
+  year           Int
+  month          Int
+  status         EvaluationReportStatus @default(DRAFT)
+  createdById    String
+  submittedById  String?
+  submittedAt    DateTime?
+  reviewedById   String?
+  reviewedAt     DateTime?
+  returnReason   String?
+  remarks        String?
+  boqTotal       Decimal                @default(0) @db.Decimal(15, 2)
+  deductionTotal Decimal                @default(0) @db.Decimal(15, 2)
+  approvedTotal  Decimal                @default(0) @db.Decimal(15, 2)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  location    Location              @relation(fields: [locationId], references: [id])
+  createdBy   User                  @relation("EvaluationReportCreator", fields: [createdById], references: [id])
+  submittedBy User?                 @relation("EvaluationReportSubmitter", fields: [submittedById], references: [id])
+  reviewedBy  User?                 @relation("EvaluationReportReviewer", fields: [reviewedById], references: [id])
+  rows        EvaluationReportRow[]
+
+  @@unique([locationId, year, month])
+  @@index([year, month])
+  @@index([status])
+}
+
+/// A BOQ row inside an evaluation report. BOQ values are copied when the report
+/// is started so later BOQ edits never change a report that is in progress.
+model EvaluationReportRow {
+  id               String       @id @default(cuid())
+  reportId         String
+  boqItemId        String?
+  itemNo           String
+  subItem          String       @default("")
+  description      String
+  frequency        BoqFrequency
+  sortOrder        Int          @default(0)
+  monthlyAmount    Decimal      @default(0) @db.Decimal(15, 2)
+  unitRate         Decimal?     @db.Decimal(15, 2)
+  unitLabel        String?
+  penaltyRate      Decimal?     @db.Decimal(15, 2)
+  /// SCHEDULED rows: number of occurrences in the month and which were done.
+  scheduledCount   Int          @default(0)
+  completedCount   Int          @default(0)
+  completedKeys    Json?
+  /// RATE_BASED rows: units delivered and units not delivered (fined).
+  quantity         Int?
+  penaltyQuantity  Int?
+  /// False until the row has been filled in ("fill in the blanks").
+  filled           Boolean      @default(false)
+  deductionPercent Decimal?     @db.Decimal(5, 2)
+  deductionAmount  Decimal      @default(0) @db.Decimal(15, 2)
+  totalAmount      Decimal      @default(0) @db.Decimal(15, 2)
+  remark           String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  report  EvaluationReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  boqItem BoqItem?         @relation(fields: [boqItemId], references: [id], onDelete: SetNull)
+
+  @@unique([reportId, boqItemId])
+  @@index([boqItemId])
+}
+
+/// PHI daily attendance sheet: number of half-day / absent staff per category.
+model PhiDailyAttendance {
+  id                  String   @id @default(cuid())
+  phiUserId           String
+  attendanceDate      DateTime @db.Date
+  halfDayEmployees    Int      @default(0)
+  halfDayGrassCutters Int      @default(0)
+  halfDaySupervisors  Int      @default(0)
+  absentEmployees     Int      @default(0)
+  absentGrassCutters  Int      @default(0)
+  absentSupervisors   Int      @default(0)
+  remark              String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  phiUser User @relation(fields: [phiUserId], references: [id])
+
+  @@unique([phiUserId, attendanceDate])
+  @@index([attendanceDate])
+}
+
+/// "Cleaning & Janitorial Services" final monthly report prepared by the DR.
+model MonthlyPaymentReport {
+  id               String              @id @default(cuid())
+  year             Int
+  month            Int
+  status           PaymentReportStatus @default(DRAFT)
+  boqTotal         Decimal             @default(0) @db.Decimal(15, 2)
+  invoiceTotal     Decimal             @default(0) @db.Decimal(15, 2)
+  approvedTotal    Decimal             @default(0) @db.Decimal(15, 2)
+  absenceDeduction Decimal             @default(0) @db.Decimal(15, 2)
+  payableTotal     Decimal             @default(0) @db.Decimal(15, 2)
+  remarks          String?
+  createdById      String
+  finalizedById    String?
+  finalizedAt      DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  createdBy   User                       @relation("PaymentReportCreator", fields: [createdById], references: [id])
+  finalizedBy User?                      @relation("PaymentReportFinalizer", fields: [finalizedById], references: [id])
+  lines       MonthlyPaymentReportLine[]
+
+  @@unique([year, month])
+}
+
+model MonthlyPaymentReportLine {
+  id                 String   @id @default(cuid())
+  reportId           String
+  locationId         String
+  boqNumber          Int?
+  description        String
+  sortOrder          Int      @default(0)
+  boqAmount          Decimal  @default(0) @db.Decimal(15, 2)
+  invoiceAmount      Decimal  @default(0) @db.Decimal(15, 2)
+  approvedAmount     Decimal  @default(0) @db.Decimal(15, 2)
+  evaluationReportId String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  report   MonthlyPaymentReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  location Location             @relation(fields: [locationId], references: [id])
+
+  @@unique([reportId, locationId])
+  @@index([locationId])
 }

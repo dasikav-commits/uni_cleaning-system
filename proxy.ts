@@ -4,14 +4,11 @@ import { NextResponse, type NextRequest } from "next/server";
 const protectedPrefixes = [
   "/dashboard",
   "/profile",
-  "/gaa",
-  "/evaluating-officer",
+  "/dr",
   "/phi",
-  "/administration",
-  "/vice-chancellor",
-  "/system-administration",
-  "/monthly-reports",
-  "/daily-monitoring",
+  "/reports",
+  "/evaluations",
+  "/notifications",
 ];
 
 function getSupabaseConfig() {
@@ -90,13 +87,10 @@ export const config = {
     "/login",
     "/dashboard/:path*",
     "/profile/:path*",
-    "/gaa/:path*",
-    "/evaluating-officer/:path*",
+    "/dr/:path*",
     "/phi/:path*",
-    "/administration/:path*",
-    "/vice-chancellor/:path*",
-    "/system-administration/:path*",
-    "/monthly-reports/:path*",
-    "/daily-monitoring/:path*",
+    "/reports/:path*",
+    "/evaluations/:path*",
+    "/notifications/:path*",
   ],
 };

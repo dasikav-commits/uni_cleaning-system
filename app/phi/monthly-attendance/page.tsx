@@ -83,8 +83,9 @@ export default async function PhiMonthlyAttendancePage({ searchParams }: { searc
                 Monthly Attendance Report
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
-                Enter the six monthly attendance categories used to prepare the official
-                deduction report. The server recalculates every total before saving.
+                The monthly attendance sent to the Deputy Registrar: half days and absences of the
+                contractor&apos;s staff for the month. Use &quot;Load totals from daily attendance&quot; to fill the
+                numbers from the daily sheet, check them, then send the report.
               </p>
             </div>
             <Link

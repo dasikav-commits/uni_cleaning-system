@@ -81,7 +81,7 @@ describe("user role validation", () => {
   });
 
   it("accepts allowed roles", () => {
-    expect(() => assertAllowedRole("GAA")).not.toThrow();
+    expect(() => assertAllowedRole("DEPUTY_REGISTRAR")).not.toThrow();
   });
 });
 
@@ -93,7 +93,7 @@ describe("listManagedUsers", () => {
         id: "user-1",
         name: "Jane Doe",
         email: "jane@example.com",
-        role: "GAA",
+        role: "DEPUTY_REGISTRAR",
         active: true,
         createdAt: new Date("2026-08-01T00:00:00Z"),
         updatedAt: new Date("2026-08-02T00:00:00Z"),
@@ -104,7 +104,7 @@ describe("listManagedUsers", () => {
       prismaMock as unknown as Parameters<typeof listManagedUsers>[0],
       {
       query: "Jane",
-      role: "GAA",
+      role: "DEPUTY_REGISTRAR",
       status: "active",
       page: 1,
       pageSize: 10,
@@ -115,7 +115,7 @@ describe("listManagedUsers", () => {
 
     expect(prismaMock.user.count).toHaveBeenCalledWith({
       where: expect.objectContaining({
-        role: "GAA",
+        role: "DEPUTY_REGISTRAR",
         active: true,
       }),
     });
@@ -136,7 +136,7 @@ describe("createManagedUser", () => {
       id: "supabase-user-1",
       name: "New User",
       email: "new@example.com",
-      role: "GAA",
+      role: "DEPUTY_REGISTRAR",
       active: true,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -148,7 +148,7 @@ describe("createManagedUser", () => {
       {
         name: "New User",
         email: "new@example.com",
-        role: "GAA",
+        role: "DEPUTY_REGISTRAR",
         active: true,
         password: "SecurePass123!",
         passwordConfirmation: "SecurePass123!",
@@ -159,14 +159,14 @@ describe("createManagedUser", () => {
       email: "new@example.com",
       password: "SecurePass123!",
       email_confirm: true,
-      user_metadata: { full_name: "New User", role: "GAA" },
+      user_metadata: { full_name: "New User", role: "DEPUTY_REGISTRAR" },
     });
     expect(prismaMock.user.create).toHaveBeenCalledWith({
       data: {
         id: "supabase-user-1",
         name: "New User",
         email: "new@example.com",
-        role: "GAA",
+        role: "DEPUTY_REGISTRAR",
         active: true,
       },
     });
@@ -178,7 +178,7 @@ describe("createManagedUser", () => {
       id: "existing",
       name: "Existing",
       email: "existing@example.com",
-      role: "GAA",
+      role: "DEPUTY_REGISTRAR",
       active: true,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -191,7 +191,7 @@ describe("createManagedUser", () => {
         {
           name: "New User",
           email: "existing@example.com",
-          role: "GAA",
+          role: "DEPUTY_REGISTRAR",
           active: true,
           password: "SecurePass123!",
           passwordConfirmation: "SecurePass123!",
@@ -218,7 +218,7 @@ describe("updateManagedUser", () => {
       id: "user-1",
       name: "New Name",
       email: "person@example.com",
-      role: "GAA",
+      role: "DEPUTY_REGISTRAR",
       active: false,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -230,7 +230,7 @@ describe("updateManagedUser", () => {
       "user-1",
       {
         name: "New Name",
-        role: "GAA",
+        role: "DEPUTY_REGISTRAR",
         active: false,
       },
     );
@@ -239,11 +239,11 @@ describe("updateManagedUser", () => {
       where: { id: "user-1" },
       data: {
         name: "New Name",
-        role: "GAA",
+        role: "DEPUTY_REGISTRAR",
         active: false,
       },
     });
-    expect(result.user.role).toBe("GAA");
+    expect(result.user.role).toBe("DEPUTY_REGISTRAR");
     expect(result.user.active).toBe(false);
   });
 });
@@ -253,13 +253,13 @@ describe("self-lockout protection", () => {
     id: "actor-1",
     name: "Admin",
     email: "admin@example.com",
-    role: "GAA",
+    role: "DEPUTY_REGISTRAR",
     active: true,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
 
-  it("prevents a GAA from deactivating their own account", async () => {
+  it("prevents the DR from deactivating their own account", async () => {
     prismaMock.user.findUnique.mockResolvedValue(self);
     prismaMock.user.update.mockClear();
     await expect(
@@ -268,7 +268,7 @@ describe("self-lockout protection", () => {
     expect(prismaMock.user.update).not.toHaveBeenCalled();
   });
 
-  it("prevents a GAA from changing their own role but still allows renaming", async () => {
+  it("prevents the DR from changing their own role but still allows renaming", async () => {
     prismaMock.user.findUnique.mockResolvedValue(self);
     await expect(
       updateManagedUser(prismaMock as unknown as Parameters<typeof updateManagedUser>[0], { id: "actor-1", name: "Admin" }, "actor-1", { role: "PHI" }),
@@ -279,7 +279,7 @@ describe("self-lockout protection", () => {
       prismaMock as unknown as Parameters<typeof updateManagedUser>[0],
       { id: "actor-1", name: "Admin" },
       "actor-1",
-      { name: "Renamed", role: "GAA", active: true },
+      { name: "Renamed", role: "DEPUTY_REGISTRAR", active: true },
     );
     expect(result.user.name).toBe("Renamed");
   });

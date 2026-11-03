@@ -91,3 +91,13 @@ export function stringField(body: Record<string, unknown>, key: string) {
   const value = body[key];
   return typeof value === "string" ? value : "";
 }
+
+/** Reads a "YYYY-MM" period from a request body or query string. */
+export function requirePeriodValue(value: unknown) {
+  const match = typeof value === "string" ? /^(\d{4})-(\d{2})$/.exec(value) : null;
+  const period = match ? { year: Number(match[1]), month: Number(match[2]) } : null;
+  if (!period || period.month < 1 || period.month > 12) {
+    throw new InvalidRequestError("Select a valid month (YYYY-MM).");
+  }
+  return period;
+}

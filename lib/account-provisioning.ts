@@ -4,18 +4,18 @@ import { isApplicationRole } from "@/lib/application-roles";
 /**
  * Self-service accounts (public signup, or a Supabase Auth user that signs in
  * without an application profile) are never trusted with a role on their own:
- * the requested role is only recorded and the account stays inactive until a
- * GAA reviews and activates it in User Management.
+ * the requested role is only recorded and the account stays inactive until the
+ * Deputy Registrar reviews and activates it in User Management.
  *
- * Bootstrap exception: while the system has no active GAA at all, a GAA
- * request is granted immediately, otherwise nobody could ever approve anyone.
+ * Bootstrap exception: while the system has no active Deputy Registrar at all,
+ * a DR request is granted immediately, otherwise nobody could approve anyone.
  */
 
 /** Placeholder role for profiles created without a valid requested role. */
-export const DEFAULT_PENDING_ROLE: UserRole = "EVALUATING_OFFICER";
+export const DEFAULT_PENDING_ROLE: UserRole = "UNIT_OFFICER";
 
-// Arbitrary constant used to serialize the "is there an active GAA yet?"
-// check so two simultaneous first signups cannot both become GAA.
+// Arbitrary constant used to serialize the "is there an active DR yet?"
+// check so two simultaneous first signups cannot both become DR.
 const BOOTSTRAP_LOCK_KEY = 74_210_031;
 
 export type ProvisionInput = {
@@ -27,9 +27,9 @@ export type ProvisionInput = {
 
 export type ProvisionResult = {
   user: User;
-  /** True when the account was created inactive and needs GAA approval. */
+  /** True when the account was created inactive and needs DR approval. */
   pendingApproval: boolean;
-  /** True when this account became the first active GAA. */
+  /** True when this account became the first active Deputy Registrar. */
   bootstrapAdmin: boolean;
 };
 
@@ -45,10 +45,10 @@ export async function provisionSelfServiceUser(
   return prisma.$transaction(async (tx) => {
     let bootstrapAdmin = false;
 
-    if (requestedRole === "GAA") {
+    if (requestedRole === "DEPUTY_REGISTRAR") {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${BOOTSTRAP_LOCK_KEY})`;
-      const activeGaaCount = await tx.user.count({ where: { role: "GAA", active: true } });
-      bootstrapAdmin = activeGaaCount === 0;
+      const activeDrCount = await tx.user.count({ where: { role: "DEPUTY_REGISTRAR", active: true } });
+      bootstrapAdmin = activeDrCount === 0;
     }
 
     const user = await tx.user.create({

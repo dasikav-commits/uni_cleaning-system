@@ -20,6 +20,25 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [emailTouched, setEmailTouched] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
+
+  const resendVerification = async () => {
+    if (!unconfirmedEmail) return;
+    setResendState("sending");
+    const supabase = getSupabaseBrowserClient();
+    const { error: resendError } = await supabase.auth.resend({
+      type: "signup",
+      email: unconfirmedEmail,
+      options: { emailRedirectTo: `${window.location.origin}/login?verified=1` },
+    });
+    if (resendError) {
+      setResendState("idle");
+      setError("We couldn't send the verification email right now. Please try again in a few minutes.");
+      return;
+    }
+    setResendState("sent");
+  };
 
   const emailError = useMemo(() => {
     if (!emailTouched) return null;
@@ -37,6 +56,8 @@ function LoginForm() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    setUnconfirmedEmail(null);
+    setResendState("idle");
     setEmailTouched(true);
     setPasswordTouched(true);
 
@@ -55,6 +76,12 @@ function LoginForm() {
 
     if (signInError) {
       setIsSubmitting(false);
+      const message = signInError.message.toLowerCase();
+      if (signInError.code === "email_not_confirmed" || message.includes("email not confirmed")) {
+        setUnconfirmedEmail(trimmedEmail);
+        setError("Please verify your email address first. Open the link in the verification email we sent you.");
+        return;
+      }
       setError(
         signInError.message.toLowerCase().includes("invalid api key")
           ? "Supabase login is not configured. Update NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in .env with the current anon/publishable key, then restart the server."
@@ -135,6 +162,12 @@ function LoginForm() {
             </div>
           ) : null}
 
+          {searchParams.get("verified") === "1" ? (
+            <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              Your email address has been verified. Sign in once the Deputy Registrar has activated your account.
+            </div>
+          ) : null}
+
           {searchParams.get("reset") === "success" ? (
             <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
               Your password has been updated. Sign in with your new password.
@@ -190,9 +223,23 @@ function LoginForm() {
             </div>
 
             {error ? (
-              <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {error}
-              </p>
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <p>{error}</p>
+                {unconfirmedEmail ? (
+                  resendState === "sent" ? (
+                    <p className="mt-2 font-semibold text-emerald-700">A new verification email has been sent to {unconfirmedEmail}.</p>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={resendState === "sending"}
+                      onClick={() => void resendVerification()}
+                      className="mt-2 font-semibold text-[#125bd0] underline hover:text-[#0b367b] disabled:opacity-60"
+                    >
+                      {resendState === "sending" ? "Sending..." : "Send the verification email again"}
+                    </button>
+                  )
+                ) : null}
+              </div>
             ) : null}
 
             <button

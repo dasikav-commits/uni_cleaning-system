@@ -4,61 +4,62 @@ Configure the environment variables listed in [`.env.example`](./.env.example) f
 
 ## How accounts work
 
-- Every account has exactly one role: **GAA**, **Administration Officer**, **Evaluating Officer**, **PHI** or **Vice Chancellor**.
-- **Self-registration** (`/signup`) only *requests* a role. The new account is created **inactive** and cannot use the
-  system until a GAA activates it (and, if needed, changes its role) in **User Management**.
-- **Bootstrap:** if no active GAA exists yet, the first person who signs up requesting the GAA role is activated
-  immediately, so a fresh installation can be set up. Every later GAA request needs approval.
-- People who sign in with a Supabase account that has no profile in the database get an inactive
-  Evaluating Officer profile, again pending GAA approval. Nobody is made a GAA automatically.
-- Deactivated users are signed out and denied access to every page and API.
-- Users with recorded history (evaluations, reports, reviews…) cannot be deleted. Deactivate them instead, so the
-  audit trail stays intact.
+- Every account has exactly one login type: **Deputy Registrar**, **PHI**, **Faculty Coordinator**,
+  **Sub-Warden**, **Curator** or **Unit Officer**. The Deputy Registrar (DR) is the administrator.
+- A login only sees the locations the DR assigned to it in **Set-up → Location assignments**.
+  The DR sees every location.
+- Sign-in is by e-mail and password through Supabase Auth. Supabase stores only salted bcrypt
+  hashes of the passwords, and the session cookies are HTTP-only. Passwords need at least 8 characters.
+- **Self-registration** (`/signup`) only *requests* a login type. The account is created **inactive**, and the person
+  must verify their e-mail address. The DR then activates it (and can change the login type) in **Set-up → Logins**.
+- **Bootstrap:** if there is no active Deputy Registrar yet, the first person who signs up requesting that role
+  is activated immediately, so a fresh installation can be set up.
+- Accounts created by the DR in **Logins** are active and already e-mail-verified.
+- People who sign in with a Supabase account that has no profile get an inactive Unit Officer profile, pending DR approval.
+- Deactivated users are signed out and denied access to every page and API. Users with recorded history cannot be
+  deleted; deactivate them instead so the audit trail stays intact.
 
-## Recommended first-time setup
+## Supabase settings (one-time)
 
-1. Sign up at `/signup` requesting the **GAA** role. As the first GAA you are activated straight away.
-2. Create the other accounts in **User Management**, or approve the people who signed up themselves.
-3. Create locations and tasks, then assign Evaluating Officers and PHIs to locations.
+In the Supabase dashboard:
+
+1. **Authentication → Sign In / Providers → Email**: turn on **Confirm email**.
+2. **Authentication → URL Configuration → Redirect URLs**: add
+   - `https://YOUR-DOMAIN/login?verified=1` and `https://YOUR-DOMAIN/reset-password`,
+   - and for development `http://localhost:3000/login?verified=1` and `http://localhost:3000/reset-password`.
+3. **Authentication → Emails → SMTP Settings**: configure your own SMTP server. Supabase's built-in mailer only sends
+   a few e-mails per hour, which is not enough for verification and reset e-mails.
+
+## E-mail verification
+
+- After sign-up the person gets a verification e-mail. The link opens `/login?verified=1`.
+- Signing in before verifying shows a message with **Send the verification email again**.
 
 ## Password reset
 
-- **Forgot password** (`/forgot-password`) emails a reset link that opens `/reset-password`.
-- In Supabase → **Authentication → URL Configuration**, add `https://YOUR-DOMAIN/reset-password` (and
-  `http://localhost:3000/reset-password` for development) to the **Redirect URLs**, otherwise the link is rejected.
+- **Forgot password** (`/forgot-password`) e-mails a reset link that opens `/reset-password`.
 - The link must be opened in the same browser the reset was requested from (Supabase PKCE flow). Expired or reused
   links show a message with a button to request a new one. After a successful reset, all sessions are signed out.
 
-## Cleaning workers
+## Notifications
 
-GAA users manage workers under **Assignments → Cleaning Workers** (`/gaa/workers`): add workers, assign them to
-locations with a monthly allocated amount, change allocations, and remove or deactivate workers. Active assignments
-of active workers are the "total workers" PHIs see for a location. Every change is recorded in the audit log.
+In-app notifications (`/notifications`) are created when a report is sent to the DR, returned for correction,
+accepted, or when the monthly payment report is finalized. If `SMTP_HOST` is set, the same messages are e-mailed.
 
 ## Test accounts (development only)
 
-`/init-test-users` (or `npm run seed`) creates one account per role using the passwords defined in
-`prisma/test-users.ts`. The passwords are public, so:
+`/init-test-users` (or `npm run seed`) creates one login of every kind from `prisma/test-users.ts` (shared password
+`Clean@2026`) and assigns them to their Kuliyapitiya locations. `npm run seed` also loads the BOQ.
 
-- The page needs your Supabase **service role key** and does not display the passwords.
+- The page needs your Supabase **service role key**.
 - In production it is disabled unless `ALLOW_TEST_USER_INIT=true`. Enable it only briefly, then delete or
   deactivate the test accounts before real use.
-
-## Monthly reports
-
-- Reports for the previous month are generated automatically on the 1st (see `vercel.json`, 01:00 UTC). This needs
-  `CRON_SECRET` and `MONTHLY_REPORT_SYSTEM_ACTOR_ID`.
-- A GAA can also run (or re-run) processing for any month from **Monthly Reports → Monthly processing**.
-- If daily records are missing, the report stays **incomplete (draft)**. Assigned officers can then open that month
-  from the report and fill in the missing days, and a GAA re-runs processing to submit it.
-- If Administration requests a **correction**, assigned Evaluating Officers and PHIs can edit that month's daily
-  records (including finalized ones; every change is logged with the previous value). An assigned Evaluating Officer
-  or a GAA then clicks **Resubmit corrected report** on the report page.
 
 ## Troubleshooting
 
 | Message | Meaning |
 |---|---|
 | "Invalid email or password" | Wrong credentials, or the Supabase account does not exist. |
-| "Your account is not active…" | A GAA has to activate the account in User Management. |
+| "Please verify your email address first" | Open the link in the verification e-mail, or send it again. |
+| "Your account is not active…" | The Deputy Registrar has to activate the account in Set-up → Logins. |
 | "Server configuration error" | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are missing. Restart the dev server after editing `.env`. |

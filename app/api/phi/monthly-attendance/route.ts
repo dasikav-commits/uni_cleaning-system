@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth";
 import { apiErrorResponse, readJsonBody } from "@/lib/api-errors";
+import { queueEmails, type EmailMessage } from "@/lib/email";
 import { prisma } from "@/lib/prisma";
 import {
   PhiMonthlyAttendanceError,
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
   try {
     const { appUser } = await requireRole("PHI");
     const body = await readJsonBody(request);
+    const outbox: EmailMessage[] = [];
 
     const report = await savePhiMonthlyAttendanceReport(
       prisma,
@@ -63,7 +65,9 @@ export async function POST(request: Request) {
         action: body.action === "submit" ? "submit" : "save",
         rows: Array.isArray(body.rows) ? body.rows.map(toRowInput) : [],
       },
+      outbox,
     );
+    queueEmails(outbox);
 
     return NextResponse.json({ report });
   } catch (error) {

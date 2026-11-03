@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/auth";
 import { apiErrorResponse } from "@/lib/api-errors";
-import { markNotificationRead } from "@/lib/system-administration";
+import { markNotificationRead } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
 
 export async function PATCH(_: Request, { params }: { params: Promise<{ id: string }> }) {

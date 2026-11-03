@@ -51,11 +51,11 @@ function defaultRows(categories: Props["categories"]) {
 
 const statusLabels: Record<string, string> = {
   DRAFT: "Draft",
-  SUBMITTED: "Submitted - awaiting Administration review",
-  RESUBMITTED: "Resubmitted - awaiting Administration review",
-  CORRECTION_REQUESTED: "Correction requested - please update and resubmit",
-  ADMIN_APPROVED: "Approved by Administration",
-  ADMIN_REJECTED: "Rejected by Administration",
+  SUBMITTED: "Sent - awaiting the Deputy Registrar's review",
+  RESUBMITTED: "Re-sent - awaiting the Deputy Registrar's review",
+  CORRECTION_REQUESTED: "Correction requested - please update and send again",
+  ADMIN_APPROVED: "Approved by the Deputy Registrar",
+  ADMIN_REJECTED: "Rejected by the Deputy Registrar",
 };
 
 function formatAmount(value: string) {
@@ -132,12 +132,30 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
     }
   }
 
+  async function loadFromDaily() {
+    setError(null);
+    setMessage(null);
+    const response = await fetch(`/api/phi/daily-attendance?period=${year}-${String(month).padStart(2, "0")}`);
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; rows?: unknown[]; totals?: Record<string, number> };
+    if (!response.ok || !payload.totals) {
+      setError(payload.error ?? "Unable to load the daily attendance.");
+      return;
+    }
+    const totals = payload.totals;
+    setRows((current) => current.map((row) => ({ ...row, employeeCount: String(totals[row.category] ?? 0) })));
+    setMessage(
+      payload.rows?.length
+        ? `Loaded the totals of ${payload.rows.length} day(s) from the daily attendance. Check them and save.`
+        : "No daily attendance was entered for this month - all counts were set to 0.",
+    );
+  }
+
   const savedReportLink = savedReport ? `/phi/monthly-attendance/${savedReport.id}` : null;
   const locked = isPhiMonthlyAttendanceLocked(savedReport?.status);
   const statusText = savedReport ? statusLabels[savedReport.status] ?? savedReport.status : "Not saved yet";
 
   function run(action: "save" | "submit") {
-    if (action === "submit" && !window.confirm("Submit this monthly report for Administration review? You will not be able to edit it unless a correction is requested.")) {
+    if (action === "submit" && !window.confirm("Send this monthly report to the Deputy Registrar? You will not be able to edit it (or the daily sheet of this month) unless a correction is requested.")) {
       return;
     }
     // Awaiting inside the transition keeps `isPending` true until the request
@@ -165,11 +183,21 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
             Status: <span className="font-semibold text-slate-900">{statusText}</span>
           </p>
         </div>
-        {savedReportLink ? (
-          <Link href={savedReportLink} className="text-sm font-semibold text-cyan-700 hover:text-cyan-900">
-            Open saved report
-          </Link>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={locked || isPending}
+            onClick={() => void loadFromDaily()}
+            className="rounded-2xl border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Load totals from daily attendance
+          </button>
+          {savedReportLink ? (
+            <Link href={savedReportLink} className="text-sm font-semibold text-cyan-700 hover:text-cyan-900">
+              Open saved report
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-6 space-y-4">
@@ -195,7 +223,7 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Number of Employees
+                      Number (days x employees)
                     </span>
                     <input
                       value={row.employeeCount}
@@ -245,7 +273,7 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
 
       {locked ? (
         <p className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          This report is locked ({statusText.toLowerCase()}). It can only be edited again if Administration requests a correction.
+          This report is locked ({statusText.toLowerCase()}). It can only be edited again if the Deputy Registrar requests a correction.
         </p>
       ) : null}
 
@@ -264,7 +292,7 @@ export function PhiMonthlyAttendanceClient({ month, year, categories, initialRep
           onClick={() => run("submit")}
           className="rounded-2xl bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isPending ? "Please wait..." : savedReport?.status === "CORRECTION_REQUESTED" ? "Resubmit Monthly Report" : "Submit Monthly Report"}
+          {isPending ? "Please wait..." : savedReport?.status === "CORRECTION_REQUESTED" ? "Send corrected report to the DR" : "Send to the Deputy Registrar"}
         </button>
       </div>
     </section>

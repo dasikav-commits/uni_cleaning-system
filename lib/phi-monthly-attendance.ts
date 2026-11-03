@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient, type UserRole } from "@/app/generated/prisma/client";
+import type { EmailMessage } from "@/lib/email";
 import { PHI_MONTHLY_ATTENDANCE_CATEGORIES, type PhiMonthlyAttendanceCategory } from "@/lib/phi-monthly-attendance-categories";
 
 export {
@@ -180,7 +181,8 @@ const detailSelect = {
 } satisfies ReportSelect;
 
 function assertCanView(report: { phiUserId: string }, actor: { id: string; role: UserRole }) {
-  if (actor.role === "PHI" && report.phiUserId !== actor.id) {
+  if (actor.role === "DEPUTY_REGISTRAR") return;
+  if (actor.role !== "PHI" || report.phiUserId !== actor.id) {
     throw new PhiMonthlyAttendanceError("ACCESS_DENIED", "You do not have permission to view this report.", 403);
   }
 }
@@ -224,6 +226,9 @@ export async function listPhiMonthlyAttendanceReports(
   actor: { id: string; role: UserRole },
   filters: { month?: number; year?: number; page?: number; pageSize?: number } = {},
 ) {
+  if (actor.role !== "PHI" && actor.role !== "DEPUTY_REGISTRAR") {
+    throw new PhiMonthlyAttendanceError("ACCESS_DENIED", "You do not have permission to view PHI attendance reports.", 403);
+  }
   const pageSize = Math.min(Math.max(filters.pageSize ?? 12, 1), 50);
   const page = Math.max(filters.page ?? 1, 1);
   const where = actor.role === "PHI" ? { phiUserId: actor.id } : {};
@@ -245,6 +250,8 @@ export async function savePhiMonthlyAttendanceReport(
   prisma: Pick<PrismaClient, "$transaction" | "phiMonthlyAttendanceReport" | "user" | "activityLog" | "notification">,
   actor: PhiMonthlyAttendanceAccess,
   input: PhiMonthlyAttendanceInput,
+  /** Notification e-mails to send once the transaction has committed. */
+  outbox: EmailMessage[] = [],
 ) {
   assertPhi(actor);
   const { month, year } = normalizeMonthYear(input);
@@ -261,12 +268,12 @@ export async function savePhiMonthlyAttendanceReport(
       throw new PhiMonthlyAttendanceError("REPORT_LOCKED", "This report has already been finalized.", 409);
     }
 
-    // A submitted report is waiting for Administration review. Editing it now
+    // A submitted report is waiting for the Deputy Registrar's review. Editing it now
     // would silently pull it back to DRAFT (or re-send it) under the reviewer.
     if (existing?.status === "SUBMITTED" || existing?.status === "RESUBMITTED") {
       throw new PhiMonthlyAttendanceError(
         "REPORT_PENDING_REVIEW",
-        "This report has been submitted and is awaiting Administration review. It can be edited again only if a correction is requested.",
+        "This report has been submitted and is awaiting the Deputy Registrar's review. It can be edited again only if a correction is requested.",
         409,
       );
     }
@@ -330,20 +337,23 @@ export async function savePhiMonthlyAttendanceReport(
     });
 
     if (submitted) {
-      const admins = await tx.user.findMany({ where: { active: true, role: "ADMINISTRATION_OFFICER" }, select: { id: true } });
-      for (const admin of admins) {
+      const reviewers = await tx.user.findMany({ where: { active: true, role: "DEPUTY_REGISTRAR" }, select: { id: true, name: true, email: true } });
+      for (const admin of reviewers) {
+        const title = status === "RESUBMITTED" ? "PHI Monthly Attendance Resubmitted" : "PHI Monthly Attendance Submitted";
+        const message = `${actor.name}'s PHI monthly attendance report for ${periodLabel(month, year)} has been ${status === "RESUBMITTED" ? "resubmitted after correction" : "submitted"}. Total deduction for absence: Rs. ${grandTotal.toFixed(2)}.`;
+        outbox.push({ to: admin.email, subject: title, text: `Dear ${admin.name},\n\n${message}`, link: `/dr/phi-attendance/${saved.id}` });
         await tx.notification.create({
           data: {
             recipientUserId: admin.id,
-            event: "MONTHLY_REPORT_AUTOMATICALLY_SUBMITTED",
-            title: status === "RESUBMITTED" ? "PHI Monthly Attendance Resubmitted" : "PHI Monthly Attendance Submitted",
-            message: `${actor.name}'s PHI monthly attendance report for ${periodLabel(month, year)} has been ${status === "RESUBMITTED" ? "resubmitted after correction" : "submitted"}.`,
+            event: "PHI_ATTENDANCE_SUBMITTED",
+            title,
+            message,
             entityType: "PhiMonthlyAttendanceReport",
             entityId: saved.id,
             // One notification per submission event: a resubmission after a
             // correction must not collide with the original submission's key.
             dedupeKey: `phi-monthly-attendance-${status.toLowerCase()}:${saved.id}:${now.getTime()}:${admin.id}`,
-            metadata: { reportId: saved.id, month, year, status } as Prisma.InputJsonValue,
+            metadata: { reportId: saved.id, month, year, status, link: `/dr/phi-attendance/${saved.id}` } as Prisma.InputJsonValue,
           },
         });
       }
@@ -366,8 +376,9 @@ export async function decidePhiMonthlyAttendanceReport(
   reportId: string,
   decision: "APPROVE" | "CORRECTION" | "REJECT",
   remarksInput?: string,
+  outbox: EmailMessage[] = [],
 ) {
-  if (!actor.active || actor.role !== "ADMINISTRATION_OFFICER") {
+  if (!actor.active || actor.role !== "DEPUTY_REGISTRAR") {
     throw new PhiMonthlyAttendanceError("ACCESS_DENIED", "You do not have permission to review this report.", 403);
   }
 
@@ -428,30 +439,26 @@ export async function decidePhiMonthlyAttendanceReport(
       },
     });
 
-    const recipients = decision === "APPROVE"
-      ? await tx.user.findMany({ where: { active: true, OR: [{ role: "GAA" }, { id: current.phiUserId }] }, select: { id: true } })
-      : await tx.user.findMany({
-          where: {
-            active: true,
-            OR: [
-              { id: current.phiUserId },
-              { role: "ADMINISTRATION_OFFICER" },
-            ],
-          },
-          select: { id: true },
-        });
+    // The PHI who prepared the report is told about the Deputy Registrar's decision.
+    const recipients = await tx.user.findMany({
+      where: { active: true, id: current.phiUserId },
+      select: { id: true, name: true, email: true },
+    });
 
     for (const recipient of recipients) {
+      const title = decision === "APPROVE" ? "Monthly Attendance Approved" : decision === "CORRECTION" ? "Monthly Attendance Correction Requested" : "Monthly Attendance Rejected";
+      const message = `PHI monthly attendance report for ${current.phiUser.name} (${periodLabel(current.month, current.year)}) has been ${decision === "APPROVE" ? "approved" : decision === "CORRECTION" ? "sent back for correction" : "rejected"} by the Deputy Registrar.${remarks ? ` Remarks: ${remarks}` : ""}`;
+      outbox.push({ to: recipient.email, subject: title, text: `Dear ${recipient.name},\n\n${message}`, link: `/phi/monthly-attendance/${reportId}` });
       await tx.notification.create({
         data: {
           recipientUserId: recipient.id,
           event: decision === "APPROVE" ? "ADMINISTRATION_APPROVED" : decision === "CORRECTION" ? "CORRECTION_REQUESTED" : "ADMINISTRATION_REJECTED",
-          title: decision === "APPROVE" ? "Monthly Attendance Approved" : decision === "CORRECTION" ? "Monthly Attendance Correction Requested" : "Monthly Attendance Rejected",
-          message: `PHI monthly attendance report for ${current.phiUser.name} (${periodLabel(current.month, current.year)}) has been ${decision === "APPROVE" ? "approved" : decision === "CORRECTION" ? "sent back for correction" : "rejected"}.${remarks ? ` Remarks: ${remarks}` : ""}`,
+          title,
+          message,
           entityType: "PhiMonthlyAttendanceReport",
           entityId: reportId,
           dedupeKey: `phi-monthly-attendance-review:${review.id}:${recipient.id}`,
-          metadata: { reportId, decision, reviewId: review.id } as Prisma.InputJsonValue,
+          metadata: { reportId, decision, reviewId: review.id, link: `/phi/monthly-attendance/${reportId}` } as Prisma.InputJsonValue,
         },
       });
     }

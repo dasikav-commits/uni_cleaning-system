@@ -2,11 +2,11 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { InvalidRequestError, readJsonBody } from "@/lib/api-errors";
 import { prisma } from "@/lib/prisma";
-import { ensureTestUsers } from "@/prisma/ensure-test-users";
+import { assignTestUserLocations, ensureTestUsers } from "@/prisma/ensure-test-users";
 import { testUsers } from "@/prisma/test-users";
 
 /**
- * Test accounts have well-known passwords (including a GAA account), so this
+ * Test accounts have well-known passwords (including a Deputy Registrar account), so this
  * bootstrap endpoint is disabled in production unless explicitly enabled.
  */
 function isTestUserInitEnabled() {
@@ -58,6 +58,8 @@ export async function POST(request: Request) {
 
     const results = await ensureTestUsers(prisma, supabase);
     const success = results.every((result) => result.status === "success");
+    // Assign the logins to their locations if the BOQ has been loaded already.
+    const assignments = await assignTestUserLocations(prisma);
 
     return NextResponse.json(
       {
@@ -66,6 +68,7 @@ export async function POST(request: Request) {
           ? "All test users were verified in Supabase Auth and PostgreSQL."
           : "Some test users could not be initialized.",
         results,
+        assignments,
         // Only returned to a caller that proved it holds the service role key.
         credentials: testUsers,
       },

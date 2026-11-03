@@ -3,15 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
-import { applicationRoles, type ApplicationRole } from "@/lib/application-roles";
-
-const roleLabels: Record<ApplicationRole, string> = {
-  GAA: "General Administrative Assistant",
-  EVALUATING_OFFICER: "Evaluating Officer",
-  PHI: "Public Health Inspector",
-  ADMINISTRATION_OFFICER: "Administration Officer",
-  VICE_CHANCELLOR: "Vice Chancellor",
-};
+import { applicationRoles, roleDescriptions, roleLabels, type ApplicationRole } from "@/lib/application-roles";
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -32,7 +24,7 @@ export default function SignupPage() {
 
   const passwordError = useMemo(() => {
     if (!password) return null;
-    if (password.length < 6) return "Password must be at least 6 characters.";
+    if (password.length < 8) return "Password must be at least 8 characters.";
     if (confirmPassword && password !== confirmPassword) return "Passwords do not match.";
     return null;
   }, [password, confirmPassword]);
@@ -46,7 +38,7 @@ export default function SignupPage() {
     const formIsInvalid =
       !trimmedName ||
       !isValidEmail(trimmedEmail) ||
-      password.length < 6 ||
+      password.length < 8 ||
       password !== confirmPassword ||
       !role;
 
@@ -88,7 +80,7 @@ export default function SignupPage() {
     setSuccessMessage(
       result.message ??
         (needsApproval
-          ? "Account created. A GAA administrator must approve it before you can sign in."
+          ? "Account created. Verify your e-mail address, then wait for the Deputy Registrar to approve your account."
           : "Account created. Redirecting you to sign in..."),
     );
     // Accounts awaiting approval cannot sign in yet, so keep the message visible.
@@ -109,11 +101,11 @@ export default function SignupPage() {
               Create your role-based university account.
             </h1>
             <p className="mt-4 max-w-md text-sm leading-7 text-slate-300">
-              Choose the role that matches your responsibilities. A GAA administrator reviews every new account and activates it with the appropriate role.
+              Choose the login that matches the reports you send. The Deputy Registrar reviews every new account, activates it and assigns your locations.
             </p>
           </div>
           <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-5 text-sm leading-6 text-cyan-50">
-            New accounts stay inactive until a GAA administrator approves them. You will be able to sign in once your account is activated.
+            Confirm your e-mail address with the link we send you. New accounts stay inactive until the Deputy Registrar approves them.
           </div>
         </section>
 
@@ -138,12 +130,12 @@ export default function SignupPage() {
             <div className="grid gap-5 sm:grid-cols-2">
               <label className="block space-y-2">
                 <span className="text-sm font-medium text-slate-700">Password</span>
-                <input required minLength={6} type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900" autoComplete="new-password" />
+                <input required minLength={8} type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900" autoComplete="new-password" />
                 {passwordError ? <p className="text-sm text-red-600">{passwordError}</p> : null}
               </label>
               <label className="block space-y-2">
                 <span className="text-sm font-medium text-slate-700">Confirm password</span>
-                <input required minLength={6} type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900" autoComplete="new-password" />
+                <input required minLength={8} type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900" autoComplete="new-password" />
               </label>
             </div>
             <label className="block space-y-2">
@@ -154,6 +146,7 @@ export default function SignupPage() {
                   <option key={applicationRole} value={applicationRole}>{roleLabels[applicationRole]}</option>
                 ))}
               </select>
+              {role ? <span className="block text-xs text-slate-500">{roleDescriptions[role]}</span> : null}
             </label>
 
             {error ? <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}

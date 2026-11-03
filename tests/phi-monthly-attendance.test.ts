@@ -77,7 +77,7 @@ function workflowPrisma(existing: { id: string; status: string; generatedAt: Dat
     phiMonthlyAttendanceSummary: { deleteMany: vi.fn(), createMany: vi.fn() },
     phiMonthlyAttendanceReview: { create: vi.fn(async () => ({ id: "review-1" })) },
     activityLog: { create: vi.fn() },
-    user: { findMany: vi.fn(async () => [{ id: "admin-1" }]) },
+    user: { findMany: vi.fn(async () => [{ id: "admin-1", name: "Deputy Registrar", email: "dr@example.com" }]) },
     notification: { create: vi.fn() },
   };
   const prisma = {
@@ -132,7 +132,23 @@ describe("PHI monthly attendance workflow", () => {
     ).rejects.toMatchObject({ code: "INVALID_CATEGORY" });
   });
 
-  it("notifies only GAA users and the owning PHI when a report is approved", async () => {
+  it("notifies the Deputy Registrar by e-mail when a report is submitted", async () => {
+    const { prisma, tx } = workflowPrisma(null);
+    const outbox: { to: string; link?: string }[] = [];
+    await savePhiMonthlyAttendanceReport(prisma as never, phi, { month: 8, year: 2026, action: "submit", rows: fullRows }, outbox as never);
+    expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { active: true, role: "DEPUTY_REGISTRAR" } }));
+    expect(tx.notification.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ event: "PHI_ATTENDANCE_SUBMITTED" }) }));
+    expect(outbox).toEqual([expect.objectContaining({ to: "dr@example.com", link: "/dr/phi-attendance/report-1" })]);
+  });
+
+  it("only lets the Deputy Registrar review a report", async () => {
+    const { prisma } = workflowPrisma(null);
+    await expect(
+      decidePhiMonthlyAttendanceReport(prisma as never, { id: "phi-1", name: "PHI", role: "PHI", active: true }, "report-1", "APPROVE"),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("notifies the owning PHI when the DR approves a report", async () => {
     const { prisma, tx } = workflowPrisma(null);
     tx.phiMonthlyAttendanceReport.findUnique.mockResolvedValue({
       id: "report-1",
@@ -144,13 +160,13 @@ describe("PHI monthly attendance workflow", () => {
     } as never);
     await decidePhiMonthlyAttendanceReport(
       prisma as never,
-      { id: "admin-1", name: "Admin", role: "ADMINISTRATION_OFFICER", active: true },
+      { id: "admin-1", name: "Admin", role: "DEPUTY_REGISTRAR", active: true },
       "report-1",
       "APPROVE",
     );
     expect(tx.user.findMany).toHaveBeenCalledWith({
-      where: { active: true, OR: [{ role: "GAA" }, { id: "phi-1" }] },
-      select: { id: true },
+      where: { active: true, id: "phi-1" },
+      select: { id: true, name: true, email: true },
     });
   });
 });
